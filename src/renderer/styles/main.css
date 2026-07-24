@@ -67,6 +67,11 @@ button:disabled {
   opacity: 0.38;
 }
 
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .sr-only,
 .sr-only:focus:not(:focus-visible) {
   position: absolute;
@@ -1435,6 +1440,10 @@ button:disabled {
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.device-row--selected {
+  background: rgba(214, 189, 137, 0.08);
 }
 
 .device-row > span strong,

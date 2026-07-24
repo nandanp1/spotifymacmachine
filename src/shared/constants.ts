@@ -12,9 +12,6 @@ export const SPOTIFY_AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 export const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
 
 export const SPOTIFY_SCOPES = [
-  "streaming",
-  "user-read-email",
-  "user-read-private",
   "user-read-playback-state",
   "user-modify-playback-state",
   "playlist-read-private",

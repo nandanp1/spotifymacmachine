@@ -1,18 +1,22 @@
 # Aura Player
 
-Aura Player is an artwork-first Spotify desktop experience for macOS. It pairs
+Aura Player is an artwork-first Spotify remote control for macOS. It pairs
 large album art with synchronized lyrics and a restrained procedural visual
-environment, while keeping playback controls, device transfer, library access,
-and settings close at hand.
+environment, while keeping playback controls, exact-device selection, library
+access, and settings close at hand. Spotify audio remains on the Spotify device
+the user selects; Aura Player does not play or process Spotify audio locally.
 
 The project is intentionally original rather than a reproduction of Spotify's
 interface. Its visual direction is editorial, cinematic, soft, and luxurious.
 
 > [!IMPORTANT]
 > Aura Player is under active development. The repository includes a real
-> Electron foundation, but live Spotify playback, packaged DRM compatibility,
-> Apple signing, and Spotify Connect behavior are not considered verified until
-> the manual checks in this document have passed on physical Macs.
+> Electron foundation and a Spotify Web API remote-control implementation.
+> Stock Electron 37 on the macOS 11 target does not expose the Widevine EME
+> capability required by Spotify's Web Playback SDK, so Aura Player does not
+> register itself as a Spotify playback device. Live remote-control behavior,
+> Apple signing, and packaged operation are not considered verified until the
+> manual checks in this document have passed on physical Macs.
 
 ## Screenshots
 
@@ -25,7 +29,7 @@ interface. Its visual direction is editorial, cinematic, soft, and luxurious.
 - macOS 11 Big Sur or newer
 - Intel x64
 - Apple Silicon arm64, subject to native-dependency verification
-- Spotify Premium for Web Playback SDK playback and Spotify Connect behavior
+- Spotify Premium for Spotify Connect playback-control operations
 
 ### Why Electron 37 is pinned
 
@@ -57,9 +61,15 @@ The definitive running checklist lives in [TASKS.md](./TASKS.md). In summary:
   build locally.
 - PKCE authentication, a loopback callback, Keychain token storage and refresh,
   and credential-deleting sign-out are implemented.
-- The Spotify Web Playback SDK adapter, honest player state, playback controls,
-  Connect device registration, device discovery, and explicit transfer are
-  implemented but still require a Premium account and packaged DRM verification.
+- Spotify authentication, available-device discovery, explicit exact-device
+  selection, remote playback controls, and current-playback synchronization are
+  implemented through Spotify's Web API. Selecting an inactive device performs
+  one user-initiated transfer without starting playback; audio remains on that
+  selected Spotify device.
+- Embedded Spotify playback and Aura-as-a-Connect-device registration are not
+  shipped. A runtime EME probe confirmed that stock Electron 37 cannot provide
+  the Widevine capability required by Spotify's Web Playback SDK on the macOS 11
+  compatibility line.
 - The artwork-first interface, deterministic Canvas visual engine, local palette
   extraction, six visual modes, synchronized and restart-persistent `.lrc`
   import, provider adapters, menu-bar controls, settings, shortcuts, and preview
@@ -71,11 +81,11 @@ The definitive running checklist lives in [TASKS.md](./TASKS.md). In summary:
 - Native power/network recovery signals, cache inspection and clearing, strict
   playback-state sequencing, and credential-safe sign-out cancellation are
   implemented. Physical sleep/wake behavior still requires manual verification.
-- Lint, strict type checking, 136 unit tests, three isolated Electron
+- Lint, strict type checking, 174 unit tests, three isolated Electron
   end-to-end flows, the production build, and the x64/arm64 packaging command
   pass.
-- Apple signing/notarization, physical Intel/Apple Silicon testing, and all live
-  Spotify/DRM checks remain external release gates.
+- Apple signing/notarization, physical Intel/Apple Silicon testing, and the live
+  Spotify remote-control checks remain external release gates.
 
 ## Prerequisites
 
@@ -113,12 +123,8 @@ with PKCE.
 Request only scopes used by the finished application. The expected set is:
 
 ```text
-streaming
-user-read-email
-user-read-private
 user-read-playback-state
 user-modify-playback-state
-user-read-currently-playing
 playlist-read-private
 playlist-read-collaborative
 user-library-read
@@ -162,7 +168,7 @@ npm run rebuild:native
 src/
 ├── main/       Electron lifecycle, windows, OAuth callback, Keychain, tray, IPC
 ├── preload/    Narrow typed contextBridge API
-├── renderer/   React UI, Spotify SDK adapter, visuals, lyrics, library
+├── renderer/   React UI, Spotify Web API clients, visuals, lyrics, library
 └── shared/     IPC schemas, shared types, constants, settings validation
 ```
 
@@ -191,16 +197,32 @@ externalization for that build.
 ### Playback boundary
 
 Renderer components depend on a `PlaybackService` interface rather than calling
-Spotify directly. The included implementation wraps Spotify's Web Playback SDK,
-but the abstraction remains replaceable and demo state is explicitly labeled so
-it cannot be mistaken for successful Spotify playback.
+Spotify directly. The shipped implementation is a Spotify Connect remote
+controller backed by Spotify's Web API:
 
-Spotify's browser SDK is loaded at runtime from Spotify. A successful web build
-does not prove packaged playback support. Electron's Chromium distribution may
-not satisfy every DRM/EME requirement used by Spotify. Confirm the SDK inside a
-packaged Electron application before treating playback or Connect registration
-as supported. If it fails, document the precise error and stop before choosing
-an alternative; never capture, download, proxy, record, or alter Spotify audio.
+1. Aura authenticates with PKCE and discovers the account's available Spotify
+   devices.
+2. The user explicitly selects one exact device. Aura never silently chooses a
+   target.
+3. If that device is inactive, Aura requests a single transfer with
+   `play: false`, then confirms that the same device became active.
+4. Play, pause, seek, skip, and supported volume commands include that exact
+   device ID. Current playback is polled to keep metadata and progress honest.
+
+Audio is produced by the selected Spotify device, not by Electron. Closing Aura
+does not turn another Mac, phone, speaker, or browser into an Aura-owned device.
+The selected device ID is runtime state rather than a persisted credential, so
+the user chooses a target again after reconnecting.
+
+Local embedded Spotify playback is intentionally unsupported on the macOS 11
+build. Stock Electron 37 does not expose the Widevine EME capability required by
+Spotify's Web Playback SDK, and the SDK reports an initialization failure.
+Aura therefore does not load the SDK, request the `streaming` scope, advertise
+`Aura Player — Mac` in Spotify's Available Devices, or claim local audio
+playback. The `PlaybackService` abstraction remains replaceable, but any future
+local implementation needs a supported DRM path and a separate product decision
+about raising the minimum macOS version. Aura never captures, downloads,
+proxies, records, or alters Spotify audio.
 
 ### Lyrics
 
@@ -293,12 +315,19 @@ Electron version, macOS version, CPU architecture, and result of each check.
 - [ ] Cancelled login and state mismatch show useful errors.
 - [ ] Tokens refresh after expiration.
 - [ ] Credentials survive restart through Keychain and disappear on sign-out.
-- [ ] The packaged player becomes ready without a DRM/initialization error.
-- [ ] `Aura Player — Mac` appears in Available Devices.
-- [ ] Playback transfers from a phone to Aura Player only after user action.
-- [ ] Playback transfers from Aura Player to another device.
-- [ ] Play, pause, previous, next, seek, and volume control real playback.
+- [ ] Device discovery lists the account's currently available Spotify devices
+      without inventing an Aura-owned device.
+- [ ] No target is selected and transport controls remain unavailable until the
+      user explicitly chooses a device.
+- [ ] Selecting an inactive target transfers playback once with `play: false`
+      and does not start or restart audio.
+- [ ] Every command continues to address the selected device; if Spotify reports
+      a different active target, Aura stops presenting itself as ready.
+- [ ] Play, pause, previous, next, seek, and supported volume commands control
+      playback on the selected Spotify device.
 - [ ] Track metadata, duration, and artwork update correctly.
+- [ ] Audio remains on the selected phone, speaker, desktop app, or web player;
+      Aura itself never appears as an audio-output device.
 - [ ] Sleep/wake and a temporary network interruption recover cleanly.
 - [ ] A non-Premium account receives a clear explanation.
 - [ ] Spotify rate limiting backs off without a retry loop.
@@ -314,7 +343,7 @@ npm run package:mac
 
 The builder declares DMG and ZIP targets for x64 and arm64 with a macOS 11
 minimum. A declaration is not proof that both artifacts work: `keytar`, Web
-Playback DRM, login callbacks, fullscreen, tray behavior, and sleep/wake
+API remote control, login callbacks, fullscreen, tray behavior, and sleep/wake
 recovery must be exercised on each architecture.
 
 Distribution requires an Apple Developer ID Application certificate,
@@ -328,8 +357,8 @@ library validation to make signing pass.
 Spotify may restrict development applications to explicitly allowlisted users,
 limit quotas, or require review before broader distribution. Aura Player should
 be treated as personal/non-commercial software unless Spotify grants broader
-approval. Spotify policy and SDK availability can change independently of this
-repository; verify current terms before any release.
+approval. Spotify policy and Web API availability can change independently of
+this repository; verify current terms before any release.
 
 ## Troubleshooting
 
@@ -347,15 +376,26 @@ confirm the account is allowed to use the development application.
 
 ### Login succeeds but playback does not start
 
-Confirm the account is Premium, inspect the human-readable SDK error state, and
-test the packaged application. Login success does not establish DRM support or
-an active Spotify device.
+Aura does not start playback merely because authentication succeeded. Open the
+device picker, choose the exact Spotify device that should produce audio, and
+then use the transport controls. Confirm the account is Premium, the target
+device remains available, and Spotify is online. Selecting a device transfers
+the session with `play: false`, so press Play explicitly if playback was paused.
 
-### Aura Player does not appear in Available Devices
+### A phone, speaker, desktop app, or web player does not appear
 
-Wait for the Web Playback SDK `ready` event and a non-empty device ID. Do not
-force-transfer in a retry loop. Confirm Premium eligibility and inspect any SDK
-account or initialization error.
+Open Spotify on the intended target so it advertises itself to Spotify Connect,
+then refresh Aura's device list. Confirm both applications use the same account
+and that the account is Premium. Aura does not register `Aura Player — Mac` as
+an output device; it only controls devices Spotify already reports. Do not
+force-transfer in a retry loop.
+
+### Local audio is silent
+
+This is expected. The macOS 11 build is a remote control, and audio remains on
+the explicitly selected Spotify device. Embedded playback is unavailable
+because stock Electron 37 lacks the Widevine EME capability required by
+Spotify's Web Playback SDK.
 
 ### Lyrics are unavailable
 
@@ -364,8 +404,13 @@ must not invent lyrics or silently scrape an unapproved source.
 
 ## Known limitations
 
-- Spotify playback and Connect remain gated by Premium and packaged DRM
-  verification.
+- Aura is a Spotify Connect remote control, not a Spotify audio-output device.
+  It does not appear in Available Devices and does not play Spotify audio
+  locally.
+- Embedded Web Playback SDK playback is unsupported on stock Electron 37 because
+  the macOS 11-compatible runtime lacks the required Widevine EME capability.
+- Spotify remote-control operations require Premium and remain subject to live,
+  packaged verification on both target architectures.
 - Electron 37 preserves macOS 11 compatibility at the cost of an older Chromium
   security baseline.
 - Apple signing and notarization require credentials supplied outside source

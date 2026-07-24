@@ -107,9 +107,9 @@ export function registerIpcHandlers({
       version: app.getVersion(),
       platform: process.platform,
       playbackRuntime: {
-        drmStatus: "unverified",
+        drmStatus: "unsupported",
         detail:
-          "Spotify Web Playback DRM support has not been verified in the packaged Electron runtime.",
+          "This macOS 11 build controls an explicitly selected Spotify device; it does not play Spotify audio locally.",
       },
     }),
   );

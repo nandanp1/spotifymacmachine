@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   parsePlaylistTracksResponse,
   parsePlaylistsResponse,
@@ -35,11 +37,61 @@ export interface SpotifyDevice {
   supportsVolume: boolean;
 }
 
+export interface SpotifyPlaybackImage {
+  url: string;
+  width?: number;
+  height?: number;
+}
+
+export interface SpotifyPlaybackTrack {
+  id: string;
+  uri: string;
+  title: string;
+  artists: string[];
+  album: {
+    name: string;
+    uri?: string;
+    images: SpotifyPlaybackImage[];
+  };
+  durationMs: number;
+  isPlayable?: boolean;
+}
+
+export interface SpotifyPlaybackRestrictions {
+  pausing: boolean;
+  resuming: boolean;
+  seeking: boolean;
+  skippingNext: boolean;
+  skippingPrevious: boolean;
+}
+
+export type SpotifyCurrentlyPlayingType =
+  | "track"
+  | "episode"
+  | "ad"
+  | "unknown";
+
+export type SpotifyRepeatMode = "off" | "context" | "track";
+
+export interface SpotifyPlaybackSnapshot {
+  device: SpotifyDevice;
+  track: SpotifyPlaybackTrack | null;
+  itemType: SpotifyCurrentlyPlayingType;
+  isPlaying: boolean;
+  progressMs: number | null;
+  contextUri: string | null;
+  repeatMode: SpotifyRepeatMode;
+  shuffle: boolean;
+  restrictions: SpotifyPlaybackRestrictions;
+  timestamp: number;
+}
+
 export type SpotifyApiProblemCode =
   | "authentication"
   | "premium-required"
   | "no-active-device"
   | "rate-limited"
+  | "quota-exceeded"
   | "network"
   | "rejected"
   | "invalid-request"
@@ -49,6 +101,7 @@ export class SpotifyApiError extends Error {
   readonly code: SpotifyApiProblemCode;
   readonly status: number | null;
   readonly retryAfterSeconds: number | null;
+  readonly reason: string | null;
   readonly action: string;
   override readonly cause?: unknown;
 
@@ -58,6 +111,7 @@ export class SpotifyApiError extends Error {
     action: string;
     status?: number;
     retryAfterSeconds?: number | null;
+    reason?: string | null;
     cause?: unknown;
   }) {
     super(options.message);
@@ -65,6 +119,7 @@ export class SpotifyApiError extends Error {
     this.code = options.code;
     this.status = options.status ?? null;
     this.retryAfterSeconds = options.retryAfterSeconds ?? null;
+    this.reason = options.reason ?? null;
     this.action = options.action;
     this.cause = options.cause;
   }
@@ -83,7 +138,8 @@ export class SpotifyApiClient {
 
   constructor(options: SpotifyApiClientOptions) {
     this.getAccessToken = options.getAccessToken;
-    this.fetchImplementation = options.fetchImplementation ?? fetch;
+    this.fetchImplementation =
+      options.fetchImplementation ?? globalThis.fetch.bind(globalThis);
     this.baseUrl = (options.baseUrl ?? "https://api.spotify.com/v1").replace(
       /\/+$/,
       "",
@@ -145,11 +201,125 @@ export class SpotifyApiClient {
 
   async getCurrentPlayback(
     signal?: AbortSignal,
-  ): Promise<Record<string, unknown> | null> {
-    return this.request(
+  ): Promise<SpotifyPlaybackSnapshot | null> {
+    const body = await this.request(
       "/me/player",
       {
         method: "GET",
+        signal,
+      },
+      "player",
+    );
+    if (body === null) {
+      return null;
+    }
+
+    const playback = parseCurrentPlayback(body);
+    if (playback === null) {
+      throw new SpotifyApiError({
+        code: "invalid-response",
+        message: "Spotify returned an invalid playback response.",
+        action: "Refresh playback state.",
+      });
+    }
+    return playback;
+  }
+
+  async resumePlayback(
+    deviceId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request(
+      `/me/player/play?${exactDeviceParameters(deviceId).toString()}`,
+      {
+        method: "PUT",
+        signal,
+      },
+      "player",
+    );
+  }
+
+  async pausePlayback(
+    deviceId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request(
+      `/me/player/pause?${exactDeviceParameters(deviceId).toString()}`,
+      {
+        method: "PUT",
+        signal,
+      },
+      "player",
+    );
+  }
+
+  async skipToNext(
+    deviceId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request(
+      `/me/player/next?${exactDeviceParameters(deviceId).toString()}`,
+      {
+        method: "POST",
+        signal,
+      },
+      "player",
+    );
+  }
+
+  async skipToPrevious(
+    deviceId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request(
+      `/me/player/previous?${exactDeviceParameters(deviceId).toString()}`,
+      {
+        method: "POST",
+        signal,
+      },
+      "player",
+    );
+  }
+
+  async seekPlayback(
+    deviceId: string,
+    positionMs: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const parameters = exactDeviceParameters(deviceId);
+    parameters.set(
+      "position_ms",
+      String(
+        requireNonNegativeInteger(
+          positionMs,
+          "Playback position must be a non-negative whole number.",
+        ),
+      ),
+    );
+    await this.request(
+      `/me/player/seek?${parameters.toString()}`,
+      {
+        method: "PUT",
+        signal,
+      },
+      "player",
+    );
+  }
+
+  async setPlaybackVolume(
+    deviceId: string,
+    volumePercent: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const parameters = exactDeviceParameters(deviceId);
+    parameters.set(
+      "volume_percent",
+      String(requireVolumePercent(volumePercent)),
+    );
+    await this.request(
+      `/me/player/volume?${parameters.toString()}`,
+      {
+        method: "PUT",
         signal,
       },
       "player",
@@ -348,6 +518,9 @@ export class SpotifyApiClient {
         throw new Error("Empty access token.");
       }
     } catch (cause) {
+      if (cause instanceof SpotifyApiError) {
+        throw cause;
+      }
       throw new SpotifyApiError({
         code: "authentication",
         message: "Spotify authorization could not be refreshed.",
@@ -452,6 +625,18 @@ function optionalDeviceParameters(deviceId?: string): URLSearchParams {
   return parameters;
 }
 
+function exactDeviceParameters(deviceId: string): URLSearchParams {
+  const normalizedId = deviceId.trim();
+  if (!normalizedId) {
+    throw new SpotifyApiError({
+      code: "no-active-device",
+      message: "Choose a Spotify device before controlling playback.",
+      action: "Open Available Devices and select a device.",
+    });
+  }
+  return new URLSearchParams({ device_id: normalizedId });
+}
+
 function requireSpotifyTrackUri(uri: string): string {
   const normalized = uri.trim();
   if (!/^spotify:track:[A-Za-z0-9]+$/u.test(normalized)) {
@@ -520,6 +705,16 @@ function requireNonNegativeInteger(value: number, message: string): number {
   return value;
 }
 
+function requireVolumePercent(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    throw invalidRequest(
+      "Spotify volume must be a whole number between 0 and 100.",
+      "Choose a valid playback volume.",
+    );
+  }
+  return value;
+}
+
 function requireValue(value: string, message: string, action: string): string {
   const normalized = value.trim();
   if (!normalized) {
@@ -578,17 +773,178 @@ function parseDevice(value: unknown): SpotifyDevice | null {
   };
 }
 
+const optionalDimensionSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .nullable()
+  .optional();
+
+const playbackImageSchema = z
+  .object({
+    url: z.string().url(),
+    width: optionalDimensionSchema,
+    height: optionalDimensionSchema,
+  })
+  .transform(
+    (image): SpotifyPlaybackImage => ({
+      url: image.url,
+      ...(image.width === null || image.width === undefined
+        ? {}
+        : { width: image.width }),
+      ...(image.height === null || image.height === undefined
+        ? {}
+        : { height: image.height }),
+    }),
+  );
+
+const playbackTrackSchema = z
+  .object({
+    id: z.string().min(1).nullable(),
+    uri: z.union([
+      z.string().regex(/^spotify:track:[A-Za-z0-9]+$/u),
+      z.string().regex(/^spotify:local:.+/u),
+    ]),
+    name: z.string(),
+    duration_ms: z.number().int().nonnegative(),
+    is_playable: z.boolean().optional(),
+    artists: z.array(
+      z.object({
+        name: z.string(),
+      }),
+    ),
+    album: z.object({
+      name: z.string(),
+      uri: z
+        .string()
+        .startsWith("spotify:album:")
+        .nullable()
+        .optional(),
+      images: z.array(playbackImageSchema),
+    }),
+  })
+  .superRefine((track, context) => {
+    if (track.id === null && !track.uri.startsWith("spotify:local:")) {
+      context.addIssue({
+        code: "custom",
+        path: ["id"],
+        message: "Only local Spotify files may omit a track ID.",
+      });
+    }
+  })
+  .transform(
+    (track): SpotifyPlaybackTrack => ({
+      id: track.id ?? track.uri,
+      uri: track.uri,
+      title: track.name,
+      artists: track.artists.map((artist) => artist.name),
+      album: {
+        name: track.album.name,
+        ...(track.album.uri === undefined || track.album.uri === null
+          ? {}
+          : { uri: track.album.uri }),
+        images: track.album.images,
+      },
+      durationMs: track.duration_ms,
+      ...(track.is_playable === undefined
+        ? {}
+        : { isPlayable: track.is_playable }),
+    }),
+  );
+
+const playbackEnvelopeSchema = z.object({
+  device: z.unknown(),
+  repeat_state: z.enum(["off", "context", "track"]),
+  shuffle_state: z.boolean(),
+  context: z
+    .object({
+      uri: z.string().min(1),
+    })
+    .nullable(),
+  timestamp: z.number().int().nonnegative(),
+  progress_ms: z.number().int().nonnegative().nullable(),
+  is_playing: z.boolean(),
+  item: z.unknown().nullable(),
+  currently_playing_type: z.string(),
+  actions: z
+    .object({
+      pausing: z.boolean().optional(),
+      resuming: z.boolean().optional(),
+      seeking: z.boolean().optional(),
+      skipping_next: z.boolean().optional(),
+      skipping_prev: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+function parseCurrentPlayback(value: unknown): SpotifyPlaybackSnapshot | null {
+  const result = playbackEnvelopeSchema.safeParse(value);
+  if (!result.success) {
+    return null;
+  }
+
+  const device = parseDevice(result.data.device);
+  if (device === null) {
+    return null;
+  }
+
+  const itemType = parseCurrentlyPlayingType(
+    result.data.currently_playing_type,
+  );
+  const trackResult =
+    itemType === "track" && result.data.item !== null
+      ? playbackTrackSchema.safeParse(result.data.item)
+      : null;
+  if (trackResult !== null && !trackResult.success) {
+    return null;
+  }
+
+  const restrictions = result.data.actions;
+  return {
+    device,
+    track: trackResult?.data ?? null,
+    itemType,
+    isPlaying: result.data.is_playing,
+    progressMs: result.data.progress_ms,
+    contextUri: result.data.context?.uri ?? null,
+    repeatMode: result.data.repeat_state,
+    shuffle: result.data.shuffle_state,
+    restrictions: {
+      pausing: restrictions?.pausing === true,
+      resuming: restrictions?.resuming === true,
+      seeking: restrictions?.seeking === true,
+      skippingNext: restrictions?.skipping_next === true,
+      skippingPrevious: restrictions?.skipping_prev === true,
+    },
+    timestamp: result.data.timestamp,
+  };
+}
+
+function parseCurrentlyPlayingType(
+  value: string,
+): SpotifyCurrentlyPlayingType {
+  if (value === "track" || value === "episode" || value === "ad") {
+    return value;
+  }
+  return "unknown";
+}
+
 async function responseToSpotifyError(
   response: Response,
   context: SpotifyRequestContext,
 ): Promise<SpotifyApiError> {
   let message: string | undefined;
+  let reason: string | undefined;
   try {
     const body: unknown = await response.json();
     if (isRecord(body) && isRecord(body.error)) {
       message =
         typeof body.error.message === "string"
           ? body.error.message
+          : undefined;
+      reason =
+        typeof body.error.reason === "string"
+          ? body.error.reason
           : undefined;
     }
   } catch {
@@ -614,6 +970,18 @@ async function responseToSpotifyError(
         status: response.status,
       });
     }
+    if (!isPremiumEligibilityError(message, reason)) {
+      return new SpotifyApiError({
+        code: "rejected",
+        message:
+          message ??
+          "Spotify did not authorize that playback request.",
+        action:
+          "Reconnect Spotify, confirm playback permissions, and try again.",
+        status: response.status,
+        reason,
+      });
+    }
     return new SpotifyApiError({
       code: "premium-required",
       message:
@@ -621,6 +989,7 @@ async function responseToSpotifyError(
         "Spotify rejected playback. Premium and the playback scope are required.",
       action: "Confirm the account has Premium and reconnect Spotify.",
       status: response.status,
+      reason,
     });
   }
   if (response.status === 404 && context === "player") {
@@ -632,6 +1001,18 @@ async function responseToSpotifyError(
     });
   }
   if (response.status === 429) {
+    if (reason === "QUOTA_EXCEEDED") {
+      return new SpotifyApiError({
+        code: "quota-exceeded",
+        message:
+          message ??
+          "Spotify API quota is exhausted for this application.",
+        action:
+          "Wait for Spotify's application quota to reset before reconnecting remote control.",
+        status: response.status,
+        reason,
+      });
+    }
     const retryAfterHeader = response.headers.get("Retry-After");
     const retryAfter =
       retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
@@ -644,6 +1025,7 @@ async function responseToSpotifyError(
         : "Try again shortly.",
       status: response.status,
       retryAfterSeconds: hasRetryAfter ? retryAfter : null,
+      reason,
     });
   }
 
@@ -657,4 +1039,20 @@ async function responseToSpotifyError(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isPremiumEligibilityError(
+  message: string | undefined,
+  reason: string | undefined,
+): boolean {
+  const detail = `${message ?? ""} ${reason ?? ""}`.toLowerCase();
+  return (
+    /\bpremium\b/.test(detail) ||
+    /\bproduct(?:\s+|_|-)*(?:eligibility|restriction|required)\b/.test(
+      detail,
+    ) ||
+    /\baccount(?:\s+|_|-)*(?:eligibility|ineligible|not(?:\s+|_|-)*eligible)\b/.test(
+      detail,
+    )
+  );
 }

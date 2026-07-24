@@ -143,9 +143,8 @@ function secureSession(session: Session, isDevelopment: boolean): void {
 
   session.setPermissionCheckHandler(() => false);
   session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    // No renderer permission is currently required. If packaged Spotify DRM
-    // verification identifies a narrowly scoped permission, add it explicitly
-    // here rather than weakening the default.
+    // The macOS 11 build controls an explicitly selected Spotify Connect
+    // device and does not require renderer permissions.
     callback(false);
   });
 

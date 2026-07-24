@@ -46,10 +46,7 @@ export type AuthState =
         | "unknown";
     };
 
-/**
- * The renderer receives this short-lived token only when Spotify's browser
- * playback SDK asks for one. It must never persist or log the value.
- */
+/** The renderer may use this short-lived token in memory for Spotify Web API calls. */
 export interface WebPlaybackToken {
   accessToken: string;
   expiresAt: number;
@@ -60,7 +57,7 @@ export interface AppInfo {
   version: string;
   platform: string;
   playbackRuntime: {
-    drmStatus: "unverified";
+    drmStatus: "unsupported";
     detail: string;
   };
 }

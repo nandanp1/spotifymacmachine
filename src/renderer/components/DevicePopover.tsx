@@ -17,6 +17,7 @@ export interface AuraDevice {
   type: "computer" | "smartphone" | "speaker";
   isActive: boolean;
   available: boolean;
+  supportsVolume: boolean;
 }
 
 interface DevicePopoverProps {
@@ -25,8 +26,10 @@ interface DevicePopoverProps {
   devices: AuraDevice[];
   loadState: "idle" | "loading" | "ready" | "error";
   errorMessage?: string;
+  selectedDeviceId?: string | null;
+  pendingDeviceId?: string | null;
   onClose: () => void;
-  onTransfer: (device: AuraDevice) => void;
+  onSelect: (device: AuraDevice) => void;
   onConnect: () => void;
   onRetry: () => void;
 }
@@ -43,8 +46,10 @@ export function DevicePopover({
   devices,
   loadState,
   errorMessage,
+  selectedDeviceId,
+  pendingDeviceId,
   onClose,
-  onTransfer,
+  onSelect,
   onConnect,
   onRetry,
 }: DevicePopoverProps) {
@@ -101,26 +106,49 @@ export function DevicePopover({
               ) : devices.length ? (
                 devices.map((device) => {
                   const DeviceIcon = deviceIcons[device.type];
+                  const selected = device.id === selectedDeviceId;
+                  const pending = device.id === pendingDeviceId;
                   return (
                     <button
                       key={device.id}
                       type="button"
-                      disabled={!device.available || device.isActive}
-                      className="device-row"
-                      onClick={() => onTransfer(device)}
+                      disabled={
+                        !device.available ||
+                        (pendingDeviceId !== null &&
+                          pendingDeviceId !== undefined)
+                      }
+                      aria-pressed={selected}
+                      className={`device-row ${
+                        selected ? "device-row--selected" : ""
+                      }`}
+                      onClick={() => onSelect(device)}
                     >
                       <DeviceIcon size={18} aria-hidden="true" />
                       <span>
                         <strong>{device.name}</strong>
                         <small>
-                          {device.isActive
-                            ? "Playing here"
-                            : device.available
-                              ? "Ready to transfer"
-                              : "Unavailable"}
+                          {pending
+                            ? "Selecting remote target…"
+                            : selected
+                              ? device.isActive
+                                ? "Remote control target · active"
+                                : "Remote control target"
+                              : device.isActive
+                                ? "Active on Spotify · select to control"
+                                : device.available
+                                  ? "Select as remote target"
+                                  : "Unavailable"}
                         </small>
                       </span>
-                      {device.isActive ? <Check size={16} aria-label="Active device" /> : null}
+                      {pending ? (
+                        <LoaderCircle
+                          className="spin"
+                          size={16}
+                          aria-label="Selecting device"
+                        />
+                      ) : selected ? (
+                        <Check size={16} aria-label="Remote control target" />
+                      ) : null}
                     </button>
                   );
                 })
@@ -134,7 +162,7 @@ export function DevicePopover({
           ) : (
             <div className="popover-empty">
               <Radio size={19} />
-              <h3>Preview device only</h3>
+              <h3>Preview mode</h3>
               <p>Connect a Premium account to discover and transfer playback.</p>
               <button className="primary-button primary-button--compact" onClick={onConnect}>
                 Connect Spotify
@@ -142,7 +170,7 @@ export function DevicePopover({
             </div>
           )}
           <p className="device-note">
-            Aura transfers playback only when you choose a device.
+            Audio stays on the Spotify device you explicitly select.
           </p>
         </motion.section>
       ) : null}

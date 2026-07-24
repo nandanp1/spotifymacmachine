@@ -140,32 +140,6 @@ export function SettingsDrawer({
                   <SlidersHorizontal size={16} />
                   <h3>Listening room</h3>
                 </div>
-                <label className="text-setting">
-                  <span>
-                    <strong>Spotify device name</strong>
-                    <small>Used the next time Aura connects to Spotify</small>
-                  </span>
-                  <input
-                    key={settings.deviceName}
-                    type="text"
-                    defaultValue={settings.deviceName}
-                    maxLength={80}
-                    spellCheck={false}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.currentTarget.blur();
-                      }
-                    }}
-                    onBlur={(event) => {
-                      const value = event.currentTarget.value.trim();
-                      if (value) {
-                        onChange("deviceName", value);
-                      } else {
-                        event.currentTarget.value = settings.deviceName;
-                      }
-                    }}
-                  />
-                </label>
                 <ToggleSetting
                   label="Fullscreen on launch"
                   checked={settings.fullscreenOnLaunch}

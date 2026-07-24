@@ -251,6 +251,10 @@ describe("player store live connection honesty", () => {
       durationMs: 180_000,
       volume: 0.5,
       deviceId: "fresh-device",
+      restrictions: {
+        pausing: true,
+        seeking: true,
+      },
       observedAt: Date.now(),
     };
     const service: ObservablePlaybackService = {
@@ -305,6 +309,10 @@ describe("player store live connection honesty", () => {
       buffering: false,
       positionMs: 1_000,
       deviceId: "fresh-device",
+      restrictions: {
+        pausing: true,
+        seeking: true,
+      },
     });
 
     vi.advanceTimersByTime(2_000);
@@ -325,6 +333,7 @@ describe("player store live connection honesty", () => {
       buffering: false,
       positionMs: 3_000,
       deviceId: null,
+      restrictions: undefined,
     });
 
     vi.advanceTimersByTime(5_000);
