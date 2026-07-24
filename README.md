@@ -81,7 +81,7 @@ The definitive running checklist lives in [TASKS.md](./TASKS.md). In summary:
 - Native power/network recovery signals, cache inspection and clearing, strict
   playback-state sequencing, and credential-safe sign-out cancellation are
   implemented. Physical sleep/wake behavior still requires manual verification.
-- Lint, strict type checking, 174 unit tests, three isolated Electron
+- Lint, strict type checking, 189 unit tests, three isolated Electron
   end-to-end flows, the production build, and the x64/arm64 packaging command
   pass.
 - Apple signing/notarization, physical Intel/Apple Silicon testing, and the live
@@ -243,6 +243,17 @@ Do not bundle copyrighted lyric text in fixtures.
 Imported files are stored in the application user-data directory with validated
 metadata sidecars. They are matched by Spotify track ID, ISRC, or normalized
 artist/title, can be listed and removed in Settings, and never leave the Mac.
+Aura checks for a match automatically on every track change. Synchronized files
+render as a full, keyboard-scrollable lyric score with one honest active line,
+line-level timing progress, intentional instrumental passages, a fixed reading
+axis, and reduced-motion support.
+
+Automatic third-party lyric lookup is not enabled. Spotify's current
+[Compliance Tips](https://developer.spotify.com/compliance-tips) explicitly
+list synchronizing Spotify recordings with lyrics as a disallowed use case, and
+the [Developer Policy](https://developer.spotify.com/policy) restricts sending
+Spotify-derived data to another service. Any network provider therefore requires
+applicable lyric-content rights and written Spotify approval before release.
 
 ### Local settings
 
@@ -399,8 +410,10 @@ Spotify's Web Playback SDK.
 
 ### Lyrics are unavailable
 
-Import a matching `.lrc` file or configure a licensed provider. Aura Player
-must not invent lyrics or silently scrape an unapproved source.
+Import a matching licensed `.lrc` file. Aura will store it locally and match it
+automatically the next time that track appears. Aura Player must not invent
+lyrics, silently scrape an unapproved source, or transmit Spotify metadata to a
+third-party lyric service without the required rights and approval.
 
 ## Known limitations
 

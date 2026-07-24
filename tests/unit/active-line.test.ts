@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   getActiveLyricIndex,
   getActiveLyricsWindow,
+  getLyricsTimelineState,
 } from "../../src/renderer/features/lyrics/active-line";
 import type { LyricsLine } from "../../src/renderer/features/lyrics/types";
 
@@ -49,6 +50,64 @@ describe("active lyric selection", () => {
       startIndex: 1,
       endIndex: 4,
       lines: lines.slice(1, 4),
+    });
+  });
+
+  it("reports line progress without pretending explicit gaps are active", () => {
+    expect(getLyricsTimelineState(lines, 1_500)).toEqual({
+      activeIndex: 0,
+      anchorIndex: 0,
+      phase: "active",
+      progress: 0.5,
+    });
+    expect(getLyricsTimelineState(lines, 2_500)).toEqual({
+      activeIndex: -1,
+      anchorIndex: 1,
+      phase: "gap",
+      progress: 0,
+    });
+  });
+
+  it("applies offsets without inventing final-line timing", () => {
+    expect(getLyricsTimelineState(lines, 3_500, 500)).toMatchObject({
+      activeIndex: 1,
+      phase: "active",
+      progress: 0,
+    });
+    expect(getLyricsTimelineState(lines, 20_000)).toEqual({
+      activeIndex: 3,
+      anchorIndex: 3,
+      phase: "active",
+      progress: null,
+    });
+  });
+
+  it("distinguishes before, after, empty, and invalid timelines", () => {
+    expect(getLyricsTimelineState(lines, 500)).toMatchObject({
+      activeIndex: -1,
+      anchorIndex: 0,
+      phase: "before",
+    });
+    expect(
+      getLyricsTimelineState(
+        [{ startMs: 1_000, endMs: 2_000, text: "A short coda" }],
+        2_500,
+      ),
+    ).toEqual({
+      activeIndex: -1,
+      anchorIndex: 0,
+      phase: "after",
+      progress: 1,
+    });
+    expect(getLyricsTimelineState([], 1_000)).toMatchObject({
+      activeIndex: -1,
+      anchorIndex: -1,
+      phase: "before",
+    });
+    expect(getLyricsTimelineState(lines, Number.NaN)).toMatchObject({
+      activeIndex: -1,
+      anchorIndex: -1,
+      phase: "before",
     });
   });
 });

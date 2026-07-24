@@ -33,7 +33,10 @@ import {
   type AuraDevice,
 } from "./components/DevicePopover";
 import { LibraryDrawer } from "./components/LibraryDrawer";
-import { LyricsPanel } from "./components/LyricsPanel";
+import {
+  LyricsPanel,
+  type LyricsPanelStatus,
+} from "./components/LyricsPanel";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { Transport } from "./components/Transport";
 import { DEMO_TRACKS, type DemoTrack } from "./demo-data";
@@ -64,6 +67,12 @@ interface ImportedLyrics {
   trackId: string;
   file: ImportedLrcFile;
   lyrics: LyricsResult;
+}
+
+interface LyricsLoadState {
+  trackId: string;
+  status: LyricsPanelStatus;
+  errorMessage?: string;
 }
 
 interface ToastMessage {
@@ -137,12 +146,17 @@ export function App() {
   const [lyricsVisible, setLyricsVisible] = useState(true);
   const [demoTrackIndex, setDemoTrackIndex] = useState(0);
   const [positionMs, setPositionMs] = useState(43_000);
-  const [importedLyrics, setImportedLyrics] = useState<ImportedLyrics | null>(
-    null,
-  );
+  const [importedLyricsByTrack, setImportedLyricsByTrack] = useState<
+    Record<string, ImportedLyrics>
+  >({});
   const [importedLyricsRecords, setImportedLyricsRecords] = useState<
     ImportedLrcRecord[]
   >([]);
+  const [lyricsLoadState, setLyricsLoadState] = useState<LyricsLoadState>({
+    trackId: "",
+    status: "loading",
+  });
+  const [lyricsRevision, setLyricsRevision] = useState(0);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   const connected = authState.status === "authenticated";
@@ -171,24 +185,32 @@ export function App() {
     (connected || player.source === "spotify"
       ? SPOTIFY_IDLE_TRACK
       : currentDemo);
+  const displayTrackIdRef = useRef(displayTrack.id);
+  const importedLyrics = importedLyricsByTrack[displayTrack.id] ?? null;
   const displayLyrics =
-    importedLyrics?.trackId === displayTrack.id
-      ? importedLyrics.lyrics
-      : displayTrack.lyrics;
+    importedLyrics?.lyrics ?? displayTrack.lyrics;
+  const displayLyricsStatus: LyricsPanelStatus = displayLyrics
+    ? "ready"
+    : displayTrack.id === SPOTIFY_IDLE_TRACK.id
+      ? "idle"
+      : lyricsLoadState.trackId === displayTrack.id
+        ? lyricsLoadState.status
+        : "loading";
+  const lyricsArtist = displayTrack.artists?.[0] ?? displayTrack.artist;
   const lyricsIdentity = useMemo<LyricsTrackIdentity>(
     () => ({
       spotifyTrackId: displayTrack.id,
       title: displayTrack.title,
-      artist: displayTrack.artist,
+      artist: lyricsArtist,
       album: displayTrack.album,
       durationMs: displayTrack.durationMs,
     }),
     [
       displayTrack.album,
-      displayTrack.artist,
       displayTrack.durationMs,
       displayTrack.id,
       displayTrack.title,
+      lyricsArtist,
     ],
   );
 
@@ -199,6 +221,10 @@ export function App() {
     },
     [],
   );
+
+  useEffect(() => {
+    displayTrackIdRef.current = displayTrack.id;
+  }, [displayTrack.id]);
 
   useEffect(() => {
     if (didInitializeDemoRef.current) return;
@@ -290,33 +316,58 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!hasDesktopApi()) return;
-    const controller = new AbortController();
     const trackId = displayTrack.id;
+    if (!hasDesktopApi()) {
+      const frame = window.requestAnimationFrame(() => {
+        setLyricsLoadState({
+          trackId,
+          status: displayTrack.lyrics ? "ready" : "unavailable",
+        });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    const controller = new AbortController();
 
     void window.aura.lyrics
       .matchImported(lyricsIdentity)
       .then(async (file) => {
         if (controller.signal.aborted) return;
         if (!file) {
-          setImportedLyrics((current) =>
-            current?.trackId === trackId ? null : current,
-          );
+          setImportedLyricsByTrack((current) => {
+            if (!(trackId in current)) {
+              return current;
+            }
+            const next = { ...current };
+            delete next[trackId];
+            return next;
+          });
+          setLyricsLoadState({
+            trackId,
+            status: displayTrack.lyrics ? "ready" : "unavailable",
+          });
           return;
         }
 
         localLyricsProvider.addEntry(toLocalLrcEntry(file));
-        const lyrics = await localLyricsProvider.findLyrics(
-          lyricsIdentity,
-          controller.signal,
-        );
-        if (!lyrics || controller.signal.aborted) return;
-        setImportedLyrics({ trackId, file, lyrics });
+        const lyrics = parseLrcLyrics(file.content, file.fileName);
+        if (controller.signal.aborted) return;
+        setImportedLyricsByTrack((current) => ({
+          ...current,
+          [trackId]: { trackId, file, lyrics },
+        }));
+        setLyricsLoadState({ trackId, status: "ready" });
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
+        const message = readError(error);
+        setLyricsLoadState({
+          trackId,
+          status: displayTrack.lyrics ? "ready" : "error",
+          ...(displayTrack.lyrics ? {} : { errorMessage: message }),
+        });
         showToast(
-          `Saved lyrics for this track could not be loaded. ${readError(error)}`,
+          `Saved lyrics for this track could not be loaded. ${message}`,
           "warning",
         );
       });
@@ -324,8 +375,10 @@ export function App() {
     return () => controller.abort();
   }, [
     displayTrack.id,
+    displayTrack.lyrics,
     localLyricsProvider,
     lyricsIdentity,
+    lyricsRevision,
     showToast,
   ]);
 
@@ -877,21 +930,40 @@ export function App() {
     }
 
     let file: ImportedLrcFile | null = null;
+    const importedForTrackId = displayTrack.id;
+    const importedForTrackTitle = displayTrack.title;
     try {
       file = await window.aura.lyrics.importLrc(lyricsIdentity);
       if (!file) return;
-      localLyricsProvider.addEntry(toLocalLrcEntry(file));
-      const lyrics =
-        (await localLyricsProvider.findLyrics(lyricsIdentity)) ??
-        parseLrcLyrics(file.content, file.fileName);
-      setImportedLyrics({ trackId: displayTrack.id, file, lyrics });
+      const importedFile = file;
+      localLyricsProvider.addEntry(toLocalLrcEntry(importedFile));
+      const lyrics = parseLrcLyrics(
+        importedFile.content,
+        importedFile.fileName,
+      );
+      setImportedLyricsByTrack((current) => ({
+        ...current,
+        [importedForTrackId]: {
+          trackId: importedForTrackId,
+          file: importedFile,
+          lyrics,
+        },
+      }));
+      if (displayTrackIdRef.current === importedForTrackId) {
+        setLyricsLoadState({
+          trackId: importedForTrackId,
+          status: "ready",
+        });
+        setLyricsVisible(true);
+      }
       setImportedLyricsRecords((current) => [
-        file as ImportedLrcFile,
-        ...current.filter((record) => record.id !== file?.id),
+        importedFile,
+        ...current.filter((record) => record.id !== importedFile.id),
       ]);
-      setLyricsVisible(true);
       setLibraryOpen(false);
-      showToast(`${file.fileName} is now synced to ${displayTrack.title}.`);
+      showToast(
+        `${importedFile.fileName} is now synced to ${importedForTrackTitle}.`,
+      );
     } catch (error) {
       if (file && hasDesktopApi()) {
         void window.aura.lyrics.deleteImported(file.id);
@@ -910,15 +982,29 @@ export function App() {
   const handleRemoveImportedLyrics = useCallback(
     async (id: string) => {
       try {
+        const removingCurrentLyrics =
+          importedLyrics?.trackId === displayTrack.id &&
+          importedLyrics.file.id === id;
         const result = hasDesktopApi()
           ? await localLyricsProvider.deletePersistedEntry(id)
           : { deleted: false };
         setImportedLyricsRecords((current) =>
           current.filter((record) => record.id !== id),
         );
-        setImportedLyrics((current) =>
-          current?.file.id === id ? null : current,
+        setImportedLyricsByTrack((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(
+              ([, entry]) => entry.file.id !== id,
+            ),
+          ),
         );
+        if (removingCurrentLyrics) {
+          setLyricsLoadState({
+            trackId: displayTrack.id,
+            status: displayTrack.lyrics ? "ready" : "loading",
+          });
+          setLyricsRevision((revision) => revision + 1);
+        }
         showToast(
           result.deleted
             ? "Imported lyrics were removed from this Mac."
@@ -928,7 +1014,13 @@ export function App() {
         showToast(readError(error), "warning");
       }
     },
-    [localLyricsProvider, showToast],
+    [
+      displayTrack.id,
+      displayTrack.lyrics,
+      importedLyrics,
+      localLyricsProvider,
+      showToast,
+    ],
   );
 
   const handleSettingChange = useCallback(
@@ -1060,6 +1152,15 @@ export function App() {
           positionMs={positionMs}
           offsetMs={settings.lyricOffsetMs}
           visible={lyricsVisible}
+          trackKey={`${displayTrack.source}:${displayTrack.id}`}
+          trackTitle={displayTrack.title}
+          status={displayLyricsStatus}
+          errorMessage={
+            lyricsLoadState.trackId === displayTrack.id
+              ? lyricsLoadState.errorMessage
+              : undefined
+          }
+          onImport={hasDesktopApi() ? handleImportLrc : undefined}
         />
       </main>
 

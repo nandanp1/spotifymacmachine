@@ -89,8 +89,13 @@ signing, or packaged behavior has passed its manual gate.
 - [x] Import and safely persist user-provided lyric files.
 - [x] Match by track ID, ISRC, and normalized artist/title.
 - [x] Select and center the active line.
+- [x] Keep the full transcript available around a fixed reading axis.
+- [x] Animate adjacent line changes and line-level timing without inventing
+      word-level synchronization.
 - [x] Add a user-controlled synchronization offset.
-- [x] Handle plain, instrumental, missing, and malformed lyrics.
+- [x] Handle plain, instrumental, loading, missing, and malformed lyrics.
+- [x] Make plain and synchronized lyrics keyboard-scrollable and honor Reduce
+      Motion and increased contrast.
 - [x] Add an unconfigured licensed-provider adapter.
 - [x] Add a disabled authorized-source adapter with configuration validation,
       explicit permission gating, `robots.txt`, rate limiting, and strict
@@ -155,3 +160,5 @@ signing, or packaged behavior has passed its manual gate.
 - Spotify development mode may restrict users and distribution.
 - Apple signing and notarization require credentials not present here.
 - Spotify's public Web API does not provide full lyrics.
+- Online lyric lookup for Spotify playback remains gated on applicable lyric
+  rights and written Spotify approval; do not silently enable a community API.

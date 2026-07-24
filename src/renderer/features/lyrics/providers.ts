@@ -489,7 +489,11 @@ function findBestLocalEntry(
         score: scoreLocalMatch(entry, track),
       }))
       .filter((candidate) => candidate.score >= 600)
-      .sort((left, right) => right.score - left.score)[0]?.entry ?? null
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          (right.entry.importedAt ?? 0) - (left.entry.importedAt ?? 0),
+      )[0]?.entry ?? null
   );
 }
 
