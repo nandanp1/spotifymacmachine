@@ -1,0 +1,36 @@
+# Dependencies and native rebuilds
+node_modules/
+
+# Electron/Vite output
+out/
+dist/
+release/
+
+# Tests
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.mobileprovision
+
+# Logs and caches
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+*.tsbuildinfo
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
