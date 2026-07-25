@@ -244,9 +244,11 @@ Imported files are stored in the application user-data directory with validated
 metadata sidecars. They are matched by Spotify track ID, ISRC, or normalized
 artist/title, can be listed and removed in Settings, and never leave the Mac.
 Aura checks for a match automatically on every track change. Synchronized files
-render as a full, keyboard-scrollable lyric score with one honest active line,
-line-level timing progress, intentional instrumental passages, a fixed reading
-axis, and reduced-motion support.
+render as the Darkroom Score: a full, keyboard-scrollable transcript moving
+through one fixed reading aperture. Past lines develop into warm ink, future
+lines remain cool, and an ambient exposure halo plus vertical timing gauge use
+only honest line-level timestamps. Instrumental gaps stay quiet, indeterminate
+timing is explicit, and reduced-motion users get the same state without motion.
 
 Automatic third-party lyric lookup is not enabled. Spotify's current
 [Compliance Tips](https://developer.spotify.com/compliance-tips) explicitly
@@ -254,6 +256,10 @@ list synchronizing Spotify recordings with lyrics as a disallowed use case, and
 the [Developer Policy](https://developer.spotify.com/policy) restricts sending
 Spotify-derived data to another service. Any network provider therefore requires
 applicable lyric-content rights and written Spotify approval before release.
+If those approvals are obtained, the preferred technical target is contracted
+[Musixmatch RichSync](https://www.postman.com/musixmatch-dev/musixmatch-apis/documentation/pqm8o6w/lyrics-api)
+through a trusted backend. Its key must never be bundled in Electron or exposed
+through a `VITE_` variable. Genius scraping is not a fallback.
 
 ### Local settings
 

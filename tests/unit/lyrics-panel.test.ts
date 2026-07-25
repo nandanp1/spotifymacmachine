@@ -106,7 +106,7 @@ afterEach(() => {
   scrollTo.mockReset();
 });
 
-describe("illuminated lyrics score", () => {
+describe("darkroom lyrics score", () => {
   it("keeps the full transcript available and marks only the timed line", () => {
     renderLyrics({ positionMs: 1_500 });
 
@@ -115,13 +115,22 @@ describe("illuminated lyrics score", () => {
     expect(screen.getByText("Second original line")).toBeInTheDocument();
     expect(screen.getByText("Final original line")).toBeInTheDocument();
 
+    const score = document.querySelector(".lyrics-score");
     const current = document.querySelector('[aria-current="time"]');
     expect(current).toHaveTextContent("Current line: First original line");
-    expect(document.querySelector(".lyrics-score")).toHaveAttribute(
-      "data-progress",
-      "0.500",
+    expect(current).not.toHaveClass("lyric-line--past");
+    expect(current).not.toHaveClass("lyric-line--future");
+    expect(screen.getByText("Second original line").closest("li")).toHaveClass(
+      "lyric-line--future",
     );
+    expect(score).toHaveAttribute("data-phase", "active");
+    expect(score).toHaveAttribute("data-timing", "bounded");
+    expect(score).toHaveAttribute("data-progress", "0.500");
+    expect(score).toHaveStyle({
+      "--lyric-exposure-opacity": "0.680",
+    });
     expect(document.querySelectorAll('[aria-current="time"]')).toHaveLength(1);
+    expect(screen.getByText("Darkroom score")).toBeInTheDocument();
     expect(screen.getByText("Original test score")).toBeInTheDocument();
     expect(screen.getByText("following playback")).toBeInTheDocument();
   });
@@ -129,7 +138,20 @@ describe("illuminated lyrics score", () => {
   it("does not claim a lyric is current during an explicit timing gap", () => {
     renderLyrics({ positionMs: 2_500 });
 
+    const score = document.querySelector(".lyrics-score");
     expect(document.querySelector('[aria-current="time"]')).toBeNull();
+    expect(score).toHaveAttribute("data-phase", "gap");
+    expect(score).toHaveAttribute("data-timing", "quiet");
+    expect(score).not.toHaveAttribute("data-progress");
+    expect(score).toHaveStyle({
+      "--lyric-exposure-opacity": "0.000",
+    });
+    expect(screen.getByText("First original line").closest("li")).toHaveClass(
+      "lyric-line--past",
+    );
+    expect(screen.getByText("Second original line").closest("li")).toHaveClass(
+      "lyric-line--future",
+    );
     expect(screen.getByText("instrumental space")).toBeInTheDocument();
   });
 
@@ -143,9 +165,27 @@ describe("illuminated lyrics score", () => {
 
   it("scrolls only when the reading anchor changes", () => {
     const { rerender } = renderLyrics({ positionMs: 1_100 });
+    const firstLineNodes = [...document.querySelectorAll(".lyric-line")];
+    const firstLineParagraph = screen
+      .getByText("First original line")
+      .closest("p");
+    expect(
+      [...(firstLineParagraph?.childNodes ?? [])].filter(
+        (node) =>
+          node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+      ),
+    ).toHaveLength(1);
     expect(scrollTo).toHaveBeenCalledTimes(1);
 
     rerender(createPanel({ positionMs: 1_800 }));
+    const progressLineNodes = [...document.querySelectorAll(".lyric-line")];
+    expect(progressLineNodes).toHaveLength(firstLineNodes.length);
+    progressLineNodes.forEach((node, index) => {
+      expect(node).toBe(firstLineNodes[index]);
+    });
+    expect(document.querySelector(".lyrics-score")).toHaveStyle({
+      "--lyric-exposure-opacity": "0.466",
+    });
     expect(scrollTo).toHaveBeenCalledTimes(1);
 
     rerender(createPanel({ positionMs: 3_200 }));
@@ -153,6 +193,16 @@ describe("illuminated lyrics score", () => {
     expect(scrollTo).toHaveBeenLastCalledWith(
       expect.objectContaining({ behavior: "smooth" }),
     );
+    expect(screen.getByText("First original line").closest("li")).toHaveClass(
+      "lyric-line--past",
+    );
+    expect(screen.getByText("Second original line").closest("li")).toHaveClass(
+      "lyric-line--active",
+    );
+    expect(
+      screen.getByText("Instrumental passage").closest("li"),
+    ).toHaveClass("lyric-line--future");
+    expect(document.querySelectorAll(".lyric-line--active")).toHaveLength(1);
     expect(resizeObservers).toHaveLength(2);
 
     resizeObservers[1]?.trigger();
@@ -206,9 +256,15 @@ describe("illuminated lyrics score", () => {
     expect(
       document.querySelector(".lyrics-panel--reduced-motion"),
     ).toBeInTheDocument();
+    expect(document.querySelector(".lyrics-score")).toHaveStyle({
+      "--lyric-exposure-opacity": "0.420",
+    });
 
     rerender(createPanel({ positionMs: 3_200 }));
 
+    expect(document.querySelector(".lyrics-score")).toHaveStyle({
+      "--lyric-exposure-opacity": "0.420",
+    });
     expect(scrollTo).toHaveBeenLastCalledWith(
       expect.objectContaining({ behavior: "auto" }),
     );
@@ -227,6 +283,13 @@ describe("illuminated lyrics score", () => {
     expect(document.querySelector(".lyrics-score")).not.toHaveAttribute(
       "data-progress",
     );
+    expect(document.querySelector(".lyrics-score")).toHaveAttribute(
+      "data-timing",
+      "indeterminate",
+    );
+    expect(document.querySelector(".lyrics-score")).toHaveStyle({
+      "--lyric-exposure-opacity": "0.380",
+    });
     expect(document.querySelector('[aria-current="time"]')).toHaveClass(
       "lyric-line--indeterminate",
     );

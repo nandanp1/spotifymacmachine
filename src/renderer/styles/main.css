@@ -688,6 +688,16 @@ input:disabled {
     transparent
   );
   transform: translateY(-50%);
+  transition:
+    width 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 360ms ease;
+}
+
+.lyrics-panel--score[data-phase="gap"] .lyrics-reading-axis,
+.lyrics-panel--score[data-phase="before"] .lyrics-reading-axis,
+.lyrics-panel--score[data-phase="after"] .lyrics-reading-axis {
+  width: 28px;
+  opacity: 0.46;
 }
 
 .lyrics-score {
@@ -697,6 +707,8 @@ input:disabled {
 }
 
 .lyric-line {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
   align-items: center;
@@ -711,6 +723,35 @@ input:disabled {
     color 440ms cubic-bezier(0.22, 1, 0.36, 1),
     opacity 440ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 440ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lyric-line::before {
+  position: absolute;
+  z-index: 0;
+  top: -12px;
+  right: -8%;
+  bottom: -12px;
+  left: 42px;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at 26% 50%,
+    color-mix(in srgb, var(--track-highlight) 30%, transparent) 0,
+    color-mix(in srgb, var(--track-primary) 16%, transparent) 38%,
+    transparent 74%
+  );
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.94);
+  transform-origin: 26% 50%;
+  transition:
+    opacity 180ms linear,
+    transform 440ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lyric-line > * {
+  position: relative;
+  z-index: 1;
 }
 
 .lyric-line p {
@@ -741,6 +782,12 @@ input:disabled {
   will-change: transform, opacity;
 }
 
+.lyric-line--active::before {
+  opacity: var(--lyric-exposure-opacity);
+  transform: scale(1);
+  will-change: opacity, transform;
+}
+
 .lyric-line--active p {
   font-size: clamp(
     calc(42px * var(--text-scale)),
@@ -767,6 +814,24 @@ input:disabled {
   transform: translate3d(17px, 0, 0) scale(0.965);
 }
 
+.lyric-line--past:not(.lyric-line--active) {
+  color: color-mix(
+    in srgb,
+    var(--track-highlight) 12%,
+    rgba(241, 238, 231, 0.84)
+  );
+  transform: translate3d(-3px, 0, 0) scale(0.98);
+}
+
+.lyric-line--future:not(.lyric-line--active) {
+  color: color-mix(
+    in srgb,
+    var(--track-primary) 20%,
+    rgba(241, 238, 231, 0.8)
+  );
+  transform: translate3d(15px, 0, 0) scale(0.97);
+}
+
 .lyric-gutter {
   display: flex;
   align-items: center;
@@ -782,24 +847,32 @@ input:disabled {
 .lyric-marker {
   position: relative;
   display: block;
-  width: 29px;
-  height: 1px;
+  width: 2px;
+  height: 42px;
   overflow: hidden;
+  flex: 0 0 2px;
+  border-radius: 999px;
   background: rgba(241, 238, 231, 0.16);
 }
 
 .lyric-marker__fill {
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   background: var(--track-highlight);
   box-shadow: 0 0 12px color-mix(in srgb, var(--track-highlight) 60%, transparent);
-  transform: scaleX(0);
-  transform-origin: left center;
+  transform: scaleY(0);
+  transform-origin: center bottom;
   transition: transform 180ms linear;
 }
 
 .lyric-line--active .lyric-marker__fill {
-  transform: scaleX(var(--lyric-progress));
+  transform: scaleY(var(--lyric-progress));
+}
+
+.lyric-line--indeterminate .lyric-marker {
+  border: 1px dashed currentColor;
+  background: transparent;
 }
 
 .lyric-line--indeterminate .lyric-marker__fill {
@@ -1008,7 +1081,18 @@ input:disabled {
   transition: none;
 }
 
+.lyrics-panel--reduced-motion .lyric-line::before,
+.lyrics-panel--reduced-motion .lyrics-reading-axis {
+  transform: none;
+  transition: none;
+}
+
+.lyrics-panel--reduced-motion .lyric-line--active::before {
+  opacity: 0.42;
+}
+
 .lyrics-panel--reduced-motion .lyric-marker__fill {
+  transform: scaleY(1);
   transition: none;
 }
 
@@ -2370,7 +2454,18 @@ input:disabled {
     transition: none;
   }
 
+  .lyric-line::before,
+  .lyrics-reading-axis {
+    transform: none;
+    transition: none;
+  }
+
+  .lyric-line--active::before {
+    opacity: 0.42;
+  }
+
   .lyric-marker__fill {
+    transform: scaleY(1);
     transition: none;
   }
 
@@ -2389,9 +2484,15 @@ input:disabled {
   .lyric-line,
   .lyric-line--distance-1,
   .lyric-line--distance-2,
-  .lyric-line--distance-3 {
+  .lyric-line--distance-3,
+  .lyric-line--past:not(.lyric-line--active),
+  .lyric-line--future:not(.lyric-line--active) {
     color: var(--bone);
     opacity: 0.82;
+  }
+
+  .lyric-line::before {
+    display: none;
   }
 
   .lyric-line--active {
@@ -2401,5 +2502,9 @@ input:disabled {
   .lyrics-reading-axis,
   .lyric-marker {
     background: rgba(241, 238, 231, 0.52);
+  }
+
+  .lyric-line--active .lyric-marker__fill {
+    transform: scaleY(1);
   }
 }

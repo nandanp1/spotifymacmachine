@@ -92,6 +92,8 @@ signing, or packaged behavior has passed its manual gate.
 - [x] Keep the full transcript available around a fixed reading axis.
 - [x] Animate adjacent line changes and line-level timing without inventing
       word-level synchronization.
+- [x] Give timed lyrics a distinct Darkroom Score treatment with past/future
+      states, an exposure halo, and a vertical timing gauge.
 - [x] Add a user-controlled synchronization offset.
 - [x] Handle plain, instrumental, loading, missing, and malformed lyrics.
 - [x] Make plain and synchronized lyrics keyboard-scrollable and honor Reduce
@@ -103,6 +105,9 @@ signing, or packaged behavior has passed its manual gate.
 - [x] Add exponential retry backoff to the authorized-source transport.
 - [x] Unit-test parsing, matching, normalization, offsets, and active-line
       boundaries using original fixture text.
+- [ ] Obtain written Spotify approval and contracted timed-lyric display rights.
+- [ ] Integrate the approved provider through a trusted backend without exposing
+      credentials in Electron or persisting content beyond the license terms.
 
 ## Phase 6 — Devices and library
 

@@ -73,7 +73,7 @@ test("opens secondary surfaces and honors keyboard lyric controls", async () => 
   await window.keyboard.press("l");
   await expect(window.getByLabel("Lyrics hidden")).toBeVisible();
   await window.keyboard.press("l");
-  await expect(window.getByText("Illuminated score")).toBeVisible();
+  await expect(window.getByText("Darkroom score")).toBeVisible();
 });
 
 test("persists visual preferences and validates the fullscreen bridge", async () => {

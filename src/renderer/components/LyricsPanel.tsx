@@ -186,10 +186,22 @@ function SyncedLyricsScore({
     reducedMotion,
   });
   const hasDeterminateProgress = timeline.progress !== null;
+  const timingState =
+    timeline.activeIndex < 0
+      ? "quiet"
+      : hasDeterminateProgress
+        ? "bounded"
+        : "indeterminate";
   const lineNodes = useMemo(
     () =>
       lyrics.lines.map((line, index) => {
         const isActive = index === timeline.activeIndex;
+        const isPast =
+          timeline.phase === "after" || index < timeline.anchorIndex;
+        const isFuture =
+          timeline.phase === "before" ||
+          index > timeline.anchorIndex ||
+          (timeline.phase === "gap" && index === timeline.anchorIndex);
         const distance = Math.min(
           3,
           Math.abs(index - Math.max(timeline.anchorIndex, 0)),
@@ -202,6 +214,8 @@ function SyncedLyricsScore({
             key={`${index}-${line.startMs}`}
             className={`lyric-line lyric-line--distance-${distance} ${
               isActive ? "lyric-line--active" : ""
+            } ${isPast ? "lyric-line--past" : ""} ${
+              isFuture ? "lyric-line--future" : ""
             } ${isInstrumental ? "lyric-line--instrumental" : ""} ${
               isActive && !hasDeterminateProgress
                 ? "lyric-line--indeterminate"
@@ -247,10 +261,20 @@ function SyncedLyricsScore({
       lyrics.lines,
       timeline.activeIndex,
       timeline.anchorIndex,
+      timeline.phase,
     ],
   );
+  const exposureOpacity =
+    timeline.activeIndex < 0
+      ? 0
+      : reducedMotion
+        ? 0.42
+        : timeline.progress === null
+          ? 0.38
+          : 0.16 + Math.sin(timeline.progress * Math.PI) * 0.52;
   const scoreStyle = {
     "--lyric-progress": timeline.progress ?? 0,
+    "--lyric-exposure-opacity": exposureOpacity.toFixed(3),
   } as CSSProperties;
 
   return (
@@ -258,11 +282,12 @@ function SyncedLyricsScore({
       className={`lyrics-panel lyrics-panel--score ${
         reducedMotion ? "lyrics-panel--reduced-motion" : ""
       }`}
+      data-phase={timeline.phase}
       aria-label={`Synchronized lyrics from ${lyrics.source}`}
       aria-live="off"
     >
       <p className="lyrics-kicker">
-        <span>Illuminated score</span>
+        <span>Darkroom score</span>
         <span aria-hidden="true">/</span>
         <span>{lyrics.source}</span>
       </p>
@@ -278,8 +303,10 @@ function SyncedLyricsScore({
           ref={scoreRef}
           className="lyrics-score"
           style={scoreStyle}
+          data-phase={timeline.phase}
+          data-timing={timingState}
           data-progress={
-            timeline.progress === null
+            timingState !== "bounded" || timeline.progress === null
               ? undefined
               : timeline.progress.toFixed(3)
           }
