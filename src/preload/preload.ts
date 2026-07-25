@@ -10,6 +10,10 @@ import {
   importedLrcFileSchema,
   importedLrcIdRequestSchema,
   importedLrcRecordsSchema,
+  lrclibCancelRequestSchema,
+  lrclibLookupCancelResultSchema,
+  lrclibLookupRequestSchema,
+  lrclibLyricsLookupResultSchema,
   lyricsImportRequestSchema,
   lyricsMatchRequestSchema,
 } from "../shared/schemas";
@@ -23,6 +27,9 @@ import type {
   ImportedLrcDeleteResult,
   ImportedLrcFile,
   ImportedLrcRecord,
+  LrclibLookupCancelResult,
+  LrclibLyricsLookupResult,
+  LrclibTrackIdentity,
   LyricsTrackIdentity,
   MenuCommand,
   MenuNowPlayingState,
@@ -149,6 +156,27 @@ const api: AuraDesktopApi = Object.freeze({
         payload,
       );
       return importedLrcDeleteResultSchema.parse(value);
+    },
+    lookupLrclib: async (
+      requestId: string,
+      track: LrclibTrackIdentity,
+    ): Promise<LrclibLyricsLookupResult> => {
+      const payload = lrclibLookupRequestSchema.parse({ requestId, track });
+      const value: unknown = await ipcRenderer.invoke(
+        IPC_CHANNELS.lyricsLookupLrclib,
+        payload,
+      );
+      return lrclibLyricsLookupResultSchema.parse(value);
+    },
+    cancelLrclib: async (
+      requestId: string,
+    ): Promise<LrclibLookupCancelResult> => {
+      const payload = lrclibCancelRequestSchema.parse({ requestId });
+      const value: unknown = await ipcRenderer.invoke(
+        IPC_CHANNELS.lyricsCancelLrclib,
+        payload,
+      );
+      return lrclibLookupCancelResultSchema.parse(value);
     },
   }),
   recovery: Object.freeze({

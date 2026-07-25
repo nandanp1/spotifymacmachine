@@ -23,6 +23,7 @@ interface LyricsPanelProps {
   trackTitle?: string;
   status?: LyricsPanelStatus;
   errorMessage?: string;
+  experimentalLookupEnabled?: boolean;
   onImport?: () => void;
 }
 
@@ -35,6 +36,7 @@ export function LyricsPanel({
   trackTitle,
   status = lyrics ? "ready" : "unavailable",
   errorMessage,
+  experimentalLookupEnabled = false,
   onImport,
 }: LyricsPanelProps) {
   const reducedMotion = useReducedMotion() === true;
@@ -70,8 +72,9 @@ export function LyricsPanel({
           <span />
         </div>
         <p>
-          Aura is matching this track with lyric sheets already saved on your
-          Mac.
+          {experimentalLookupEnabled
+            ? "Aura is checking saved lyric sheets first, then the opted-in LRCLIB community catalog."
+            : "Aura is matching this track with lyric sheets already saved on your Mac."}
         </p>
       </motion.section>
     );
@@ -80,8 +83,8 @@ export function LyricsPanel({
   if (status === "error" && !lyrics) {
     return (
       <LyricsEmptyState
-        eyebrow="The page would not open"
-        title="Saved lyrics hit a snag."
+        eyebrow="The lookup would not open"
+        title="Lyrics lookup hit a snag."
         description={
           errorMessage ??
           "Try importing the synchronized lyric sheet for this track again."
@@ -111,9 +114,10 @@ export function LyricsPanel({
         eyebrow="No lyric sheet found"
         title="The music can keep the room."
         description={
-          trackTitle
+          errorMessage ??
+          (trackTitle
             ? `Spotify does not provide lyric text to Aura for “${trackTitle}.” Import a licensed .lrc once and Aura will match it automatically next time.`
-            : "Import a licensed synchronized .lrc once and Aura will match it automatically next time."
+            : "Import a licensed synchronized .lrc once and Aura will match it automatically next time.")
         }
         actionLabel="Import synced .lrc"
         onAction={onImport}

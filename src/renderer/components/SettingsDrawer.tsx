@@ -16,7 +16,10 @@ import type {
 import { useDialogFocus } from "../hooks/use-dialog-focus";
 import { IconButton } from "./IconButton";
 
-export type SettingsValues = AppSettings;
+export type SettingsValues = AppSettings & {
+  syncing?: boolean;
+  error?: string | null;
+};
 
 interface SettingsDrawerProps {
   open: boolean;
@@ -26,8 +29,14 @@ interface SettingsDrawerProps {
   importedLyrics: ImportedLrcRecord[];
   currentImportedLyricsId?: string;
   cacheSizeBytes: number | null | undefined;
+  experimentalLyricsEnabled: boolean;
+  experimentalLyricsStatus?: string;
   onClose: () => void;
-  onChange: <K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) => void;
+  onChange: <K extends keyof AppSettings>(
+    key: K,
+    value: AppSettings[K],
+  ) => void;
+  onExperimentalLyricsChange: (enabled: boolean) => void;
   onReset: () => void;
   onImportLrc: () => void;
   onRemoveLrc: (id: string) => void;
@@ -53,8 +62,11 @@ export function SettingsDrawer({
   importedLyrics,
   currentImportedLyricsId,
   cacheSizeBytes,
+  experimentalLyricsEnabled,
+  experimentalLyricsStatus,
   onClose,
   onChange,
+  onExperimentalLyricsChange,
   onReset,
   onImportLrc,
   onRemoveLrc,
@@ -283,10 +295,11 @@ export function SettingsDrawer({
                     Import synchronized .lrc
                   </button>
                 )}
-                <p className="settings-help">
-                  Licensed provider credentials and permitted source adapters can be
-                  configured in the developer settings file.
-                </p>
+                <ExperimentalLyricsSetting
+                  enabled={experimentalLyricsEnabled}
+                  status={experimentalLyricsStatus}
+                  onChange={onExperimentalLyricsChange}
+                />
               </section>
 
               <section className="settings-section settings-section--danger">
@@ -315,12 +328,94 @@ export function SettingsDrawer({
                 <RotateCcw size={15} />
                 Restore defaults
               </button>
-              <span>Aura Player · macOS 11+</span>
+              {settings.error || settings.syncing ? (
+                <span role="status" aria-live="polite">
+                  {settings.error ?? "Saving settings…"}
+                </span>
+              ) : (
+                <span>Aura Player · macOS 11+</span>
+              )}
             </footer>
           </motion.aside>
         </>
       ) : null}
     </AnimatePresence>
+  );
+}
+
+interface ExperimentalLyricsSettingProps {
+  enabled: boolean;
+  status?: string;
+  onChange: (enabled: boolean) => void;
+}
+
+function ExperimentalLyricsSetting({
+  enabled,
+  status,
+  onChange,
+}: ExperimentalLyricsSettingProps) {
+  return (
+    <div
+      className={`experimental-lyrics-card ${
+        enabled ? "experimental-lyrics-card--enabled" : ""
+      }`}
+    >
+      <div className="experimental-lyrics-card__folio" aria-hidden="true">
+        <span>External source / 01</span>
+        <span>{enabled ? "Opted in" : "Off by default"}</span>
+      </div>
+
+      <label className="experimental-lyrics-card__toggle">
+        <span className="experimental-lyrics-card__identity">
+          <strong id="experimental-lrclib-label">Experimental LRCLIB</strong>
+          <small>Community lyric lookup</small>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={enabled}
+          aria-labelledby="experimental-lrclib-label"
+          aria-describedby="experimental-lrclib-disclosure experimental-lrclib-policy"
+          onChange={(event) => onChange(event.currentTarget.checked)}
+        />
+        <span
+          className="experimental-lyrics-card__control"
+          aria-hidden="true"
+        >
+          <span />
+        </span>
+      </label>
+
+      <p
+        className="experimental-lyrics-card__disclosure"
+        id="experimental-lrclib-disclosure"
+      >
+        If no local match exists, opting in allows Aura to send the current
+        track&apos;s title, artist, album, and duration off this Mac to LRCLIB.
+        Community-supplied lyrics may have unclear licensing or rights.
+      </p>
+
+      <ul
+        className="experimental-lyrics-card__policy"
+        id="experimental-lrclib-policy"
+      >
+        <li>
+          <strong>Local first</strong>
+          <span>Saved .lrc files always take priority.</span>
+        </li>
+        <li>
+          <strong>Release status</strong>
+          <span>This adapter is not cleared for public release.</span>
+        </li>
+      </ul>
+
+      {status ? (
+        <p className="experimental-lyrics-card__status">
+          <strong>Provider note</strong>
+          <span>{status}</span>
+        </p>
+      ) : null}
+    </div>
   );
 }
 

@@ -103,6 +103,11 @@ signing, or packaged behavior has passed its manual gate.
       explicit permission gating, `robots.txt`, rate limiting, and strict
       request serialization.
 - [x] Add exponential retry backoff to the authorized-source transport.
+- [x] Add an explicit, disabled-by-default LRCLIB experiment that checks local
+      files first and sends only title, artist, album, and duration through a
+      fixed main-process endpoint.
+- [x] Bound LRCLIB requests with cancellation, timeout, response-size,
+      identity, serialization, cooldown, and memory-only cache controls.
 - [x] Unit-test parsing, matching, normalization, offsets, and active-line
       boundaries using original fixture text.
 - [ ] Obtain written Spotify approval and contracted timed-lyric display rights.
@@ -123,7 +128,8 @@ signing, or packaged behavior has passed its manual gate.
 - [x] Add an optional menu-bar controller.
 - [x] Add fullscreen-on-launch and launch-at-login.
 - [x] Persist validated non-sensitive settings.
-- [x] Add lyric offset, motion, blur, art scale, text size, and tray settings.
+- [x] Add lyric offset, motion, blur, art scale, text size, tray, and
+      experimental LRCLIB settings.
 - [x] Add cache clearing without touching Keychain credentials.
 - [x] Add cache inspection.
 - [ ] Complete keyboard and screen-reader audit.

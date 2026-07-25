@@ -11,6 +11,7 @@ describe("application settings schemas", () => {
     expect(appSettingsSchema.parse(defaultSettings)).toEqual(defaultSettings);
     expect(defaultSettings).toMatchObject({
       deviceName: "Aura Player — Mac",
+      experimentalLrclibEnabled: false,
       lyricOffsetMs: 0,
       motionIntensity: 0.72,
       visualMode: "aurora",
@@ -20,17 +21,33 @@ describe("application settings schemas", () => {
   it("accepts a bounded partial settings update", () => {
     expect(
       settingsPatchSchema.parse({
+        experimentalLrclibEnabled: true,
         lyricOffsetMs: -850,
         motionIntensity: 0,
         textScale: 1.5,
         visualMode: "minimal",
       }),
     ).toEqual({
+      experimentalLrclibEnabled: true,
       lyricOffsetMs: -850,
       motionIntensity: 0,
       textScale: 1.5,
       visualMode: "minimal",
     });
+  });
+
+  it("keeps the experimental LRCLIB opt-in explicit and boolean-only", () => {
+    expect(settingsPatchSchema.parse({})).toEqual({});
+    expect(
+      settingsPatchSchema.parse({ experimentalLrclibEnabled: false }),
+    ).toEqual({ experimentalLrclibEnabled: false });
+    expect(
+      settingsPatchSchema.parse({ experimentalLrclibEnabled: true }),
+    ).toEqual({ experimentalLrclibEnabled: true });
+    expect(
+      settingsPatchSchema.safeParse({ experimentalLrclibEnabled: "true" })
+        .success,
+    ).toBe(false);
   });
 
   it.each([

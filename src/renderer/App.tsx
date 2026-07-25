@@ -14,13 +14,15 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type Dispatch,
+  type SetStateAction,
 } from "react";
 import type {
   AppSettings,
   AuthState,
   ImportedLrcFile,
   ImportedLrcRecord,
-  LyricsTrackIdentity,
+  LrclibTrackIdentity,
 } from "../shared/types";
 import { ArtworkStage } from "./components/ArtworkStage";
 import { CinematicBackdrop } from "./components/CinematicBackdrop";
@@ -50,6 +52,7 @@ import {
   type SpotifyTrack,
 } from "./features/library";
 import { parseLrcLyrics } from "./features/lyrics/lrc";
+import { resolveLrclibLookup } from "./features/lyrics/lrclib";
 import {
   LocalLrcProvider,
   type LocalLrcEntry,
@@ -69,6 +72,11 @@ interface ImportedLyrics {
   lyrics: LyricsResult;
 }
 
+interface RemoteLyrics {
+  trackId: string;
+  lyrics: LyricsResult;
+}
+
 interface LyricsLoadState {
   trackId: string;
   status: LyricsPanelStatus;
@@ -80,6 +88,8 @@ interface ToastMessage {
   message: string;
   tone: "info" | "warning";
 }
+
+const MAX_REMOTE_LYRICS_TRACKS = 32;
 
 const SPOTIFY_IDLE_TRACK: DemoTrack = {
   id: "aura-spotify-idle",
@@ -149,6 +159,9 @@ export function App() {
   const [importedLyricsByTrack, setImportedLyricsByTrack] = useState<
     Record<string, ImportedLyrics>
   >({});
+  const [remoteLyricsByTrack, setRemoteLyricsByTrack] = useState<
+    Record<string, RemoteLyrics>
+  >({});
   const [importedLyricsRecords, setImportedLyricsRecords] = useState<
     ImportedLrcRecord[]
   >([]);
@@ -185,10 +198,14 @@ export function App() {
     (connected || player.source === "spotify"
       ? SPOTIFY_IDLE_TRACK
       : currentDemo);
+  const isLiveSpotifyTrack = liveDisplayTrack !== null;
   const displayTrackIdRef = useRef(displayTrack.id);
   const importedLyrics = importedLyricsByTrack[displayTrack.id] ?? null;
+  const remoteLyrics = settings.experimentalLrclibEnabled
+    ? remoteLyricsByTrack[displayTrack.id] ?? null
+    : null;
   const displayLyrics =
-    importedLyrics?.lyrics ?? displayTrack.lyrics;
+    importedLyrics?.lyrics ?? remoteLyrics?.lyrics ?? displayTrack.lyrics;
   const displayLyricsStatus: LyricsPanelStatus = displayLyrics
     ? "ready"
     : displayTrack.id === SPOTIFY_IDLE_TRACK.id
@@ -196,8 +213,19 @@ export function App() {
       : lyricsLoadState.trackId === displayTrack.id
         ? lyricsLoadState.status
         : "loading";
+  const experimentalLyricsStatus = !settings.experimentalLrclibEnabled
+    ? undefined
+    : remoteLyrics
+      ? "A memory-only LRCLIB match is active for this track."
+      : lyricsLoadState.trackId === displayTrack.id &&
+          lyricsLoadState.status === "loading"
+        ? "Checking local lyric sheets before contacting LRCLIB…"
+        : lyricsLoadState.trackId === displayTrack.id &&
+            lyricsLoadState.errorMessage
+          ? lyricsLoadState.errorMessage
+          : "Enabled. Aura contacts LRCLIB only after a local .lrc miss.";
   const lyricsArtist = displayTrack.artists?.[0] ?? displayTrack.artist;
-  const lyricsIdentity = useMemo<LyricsTrackIdentity>(
+  const lyricsIdentity = useMemo<LrclibTrackIdentity>(
     () => ({
       spotifyTrackId: displayTrack.id,
       title: displayTrack.title,
@@ -258,6 +286,9 @@ export function App() {
         setConnectionError(undefined);
         return;
       }
+      setRemoteLyricsByTrack((current) =>
+        Object.keys(current).length > 0 ? {} : current,
+      );
       if (playbackServiceRef.current) {
         playbackStatusUnsubscribeRef.current?.();
         playbackStatusUnsubscribeRef.current = null;
@@ -328,27 +359,27 @@ export function App() {
     }
 
     const controller = new AbortController();
+    let lrclibRequestId: string | null = null;
 
-    void window.aura.lyrics
-      .matchImported(lyricsIdentity)
-      .then(async (file) => {
-        if (controller.signal.aborted) return;
-        if (!file) {
-          setImportedLyricsByTrack((current) => {
-            if (!(trackId in current)) {
-              return current;
-            }
-            const next = { ...current };
-            delete next[trackId];
-            return next;
-          });
-          setLyricsLoadState({
-            trackId,
-            status: displayTrack.lyrics ? "ready" : "unavailable",
-          });
-          return;
+    const removeTrackEntry = <Value,>(
+      update: Dispatch<SetStateAction<Record<string, Value>>>,
+    ) => {
+      update((current) => {
+        if (!(trackId in current)) {
+          return current;
         }
+        const next = { ...current };
+        delete next[trackId];
+        return next;
+      });
+    };
 
+    const loadLyrics = async () => {
+      setLyricsLoadState({ trackId, status: "loading" });
+      const file = await window.aura.lyrics.matchImported(lyricsIdentity);
+      if (controller.signal.aborted) return;
+
+      if (file) {
         localLyricsProvider.addEntry(toLocalLrcEntry(file));
         const lyrics = parseLrcLyrics(file.content, file.fileName);
         if (controller.signal.aborted) return;
@@ -356,29 +387,92 @@ export function App() {
           ...current,
           [trackId]: { trackId, file, lyrics },
         }));
+        removeTrackEntry(setRemoteLyricsByTrack);
         setLyricsLoadState({ trackId, status: "ready" });
-      })
-      .catch((error) => {
+        return;
+      }
+
+      removeTrackEntry(setImportedLyricsByTrack);
+
+      if (
+        !settings.experimentalLrclibEnabled ||
+        !isLiveSpotifyTrack
+      ) {
+        removeTrackEntry(setRemoteLyricsByTrack);
+        setLyricsLoadState({
+          trackId,
+          status: displayTrack.lyrics ? "ready" : "unavailable",
+        });
+        return;
+      }
+
+      lrclibRequestId = crypto.randomUUID();
+      const result = await window.aura.lyrics.lookupLrclib(
+        lrclibRequestId,
+        lyricsIdentity,
+      );
+      if (controller.signal.aborted) return;
+
+      const resolution = resolveLrclibLookup(result, displayTrack.title);
+      if (resolution.kind === "lyrics") {
+        setRemoteLyricsByTrack((current) =>
+          addBoundedTrackEntry(
+            current,
+            trackId,
+            {
+              trackId,
+              lyrics: resolution.lyrics,
+            },
+            MAX_REMOTE_LYRICS_TRACKS,
+          ),
+        );
+        setLyricsLoadState({ trackId, status: "ready" });
+        return;
+      }
+
+      removeTrackEntry(setRemoteLyricsByTrack);
+      if (resolution.kind === "disabled") {
+        setLyricsLoadState({ trackId, status: "unavailable" });
+        return;
+      }
+      setLyricsLoadState({
+        trackId,
+        status:
+          resolution.kind === "error" ? "error" : "unavailable",
+        errorMessage: resolution.message,
+      });
+    };
+
+    void loadLyrics().catch((error) => {
         if (controller.signal.aborted) return;
         const message = readError(error);
+        removeTrackEntry(setRemoteLyricsByTrack);
         setLyricsLoadState({
           trackId,
           status: displayTrack.lyrics ? "ready" : "error",
           ...(displayTrack.lyrics ? {} : { errorMessage: message }),
         });
         showToast(
-          `Saved lyrics for this track could not be loaded. ${message}`,
+          `Lyrics for this track could not be loaded. ${message}`,
           "warning",
         );
       });
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (lrclibRequestId !== null) {
+        void window.aura.lyrics.cancelLrclib(lrclibRequestId);
+      }
+    };
   }, [
     displayTrack.id,
     displayTrack.lyrics,
+    displayTrack.title,
+    isLiveSpotifyTrack,
     localLyricsProvider,
     lyricsIdentity,
     lyricsRevision,
+    settings.experimentalLrclibEnabled,
     showToast,
   ]);
 
@@ -1160,6 +1254,7 @@ export function App() {
               ? lyricsLoadState.errorMessage
               : undefined
           }
+          experimentalLookupEnabled={settings.experimentalLrclibEnabled}
           onImport={hasDesktopApi() ? handleImportLrc : undefined}
         />
       </main>
@@ -1223,9 +1318,20 @@ export function App() {
         importedLyrics={importedLyricsRecords}
         currentImportedLyricsId={importedLyrics?.file.id}
         cacheSizeBytes={cacheSizeBytes}
+        experimentalLyricsEnabled={settings.experimentalLrclibEnabled}
+        experimentalLyricsStatus={experimentalLyricsStatus}
         onClose={() => setSettingsOpen(false)}
         onChange={handleSettingChange}
-        onReset={() => void settings.resetSettings()}
+        onExperimentalLyricsChange={(enabled) => {
+          if (!enabled) {
+            setRemoteLyricsByTrack({});
+          }
+          void settings.updateSetting("experimentalLrclibEnabled", enabled);
+        }}
+        onReset={() => {
+          setRemoteLyricsByTrack({});
+          void settings.resetSettings();
+        }}
         onImportLrc={handleImportLrc}
         onRemoveLrc={(id) => void handleRemoveImportedLyrics(id)}
         onClearCache={handleClearCache}
@@ -1358,6 +1464,25 @@ function toLocalLrcEntry(file: ImportedLrcFile): LocalLrcEntry {
     durationMs: file.durationMs,
     importedAt: Date.parse(file.importedAt),
   };
+}
+
+function addBoundedTrackEntry<Value>(
+  current: Record<string, Value>,
+  trackId: string,
+  value: Value,
+  maximumEntries: number,
+): Record<string, Value> {
+  const next = { ...current };
+  delete next[trackId];
+  next[trackId] = value;
+
+  const overflow = Object.keys(next).length - maximumEntries;
+  if (overflow > 0) {
+    for (const key of Object.keys(next).slice(0, overflow)) {
+      delete next[key];
+    }
+  }
+  return next;
 }
 
 function hashString(value: string) {

@@ -72,8 +72,8 @@ The definitive running checklist lives in [TASKS.md](./TASKS.md). In summary:
   compatibility line.
 - The artwork-first interface, deterministic Canvas visual engine, local palette
   extraction, six visual modes, synchronized and restart-persistent `.lrc`
-  import, provider adapters, menu-bar controls, settings, shortcuts, and preview
-  experience are implemented.
+  import, an opt-in experimental LRCLIB fallback, provider adapters, menu-bar
+  controls, settings, shortcuts, and preview experience are implemented.
 - The secondary library supports live Spotify search, saved tracks, playlists,
   playlist browsing, pagination, playback, queue/play-next, and safe
   open-in-Spotify actions, with honest loading, empty, offline, rate-limit, and
@@ -81,7 +81,7 @@ The definitive running checklist lives in [TASKS.md](./TASKS.md). In summary:
 - Native power/network recovery signals, cache inspection and clearing, strict
   playback-state sequencing, and credential-safe sign-out cancellation are
   implemented. Physical sleep/wake behavior still requires manual verification.
-- Lint, strict type checking, 189 unit tests, three isolated Electron
+- Lint, strict type checking, 220 unit tests, four isolated Electron
   end-to-end flows, the production build, and the x64/arm64 packaging command
   pass.
 - Apple signing/notarization, physical Intel/Apple Silicon testing, and the live
@@ -230,6 +230,7 @@ Spotify's public Web API does not provide full lyrics. Aura Player supports a
 provider-independent model:
 
 - user-imported `.lrc` files;
+- an experimental, disabled-by-default LRCLIB lookup;
 - a separately licensed lyrics API;
 - source adapters for sites the user owns, controls, or has explicit permission
   to scrape.
@@ -250,16 +251,28 @@ lines remain cool, and an ambient exposure halo plus vertical timing gauge use
 only honest line-level timestamps. Instrumental gaps stay quiet, indeterminate
 timing is explicit, and reduced-motion users get the same state without motion.
 
-Automatic third-party lyric lookup is not enabled. Spotify's current
+The Experimental LRCLIB switch in Settings enables automatic fallback only
+after local matching fails. When enabled, Aura sends the current track title,
+artist, album, and duration to the fixed `https://lrclib.net/api/get` endpoint.
+It does not send Spotify credentials, track IDs, or arbitrary URLs. Requests
+run sequentially in the main process with cancellation, timeout, response-size,
+identity, per-window request-budget, and rate-limit checks. Returned lyrics are
+held in bounded, memory-only caches and are not written to disk. Disabling the
+switch or signing out clears those caches. LRCLIB requires no API key, but a
+free API is not itself a license to redistribute the community-supplied lyric
+corpus.
+
+This adapter is a personal-development experiment, not an approved distribution
+path. Spotify's current
 [Compliance Tips](https://developer.spotify.com/compliance-tips) explicitly
 list synchronizing Spotify recordings with lyrics as a disallowed use case, and
 the [Developer Policy](https://developer.spotify.com/policy) restricts sending
 Spotify-derived data to another service. Any network provider therefore requires
-applicable lyric-content rights and written Spotify approval before release.
-If those approvals are obtained, the preferred technical target is contracted
-[Musixmatch RichSync](https://www.postman.com/musixmatch-dev/musixmatch-apis/documentation/pqm8o6w/lyrics-api)
-through a trusted backend. Its key must never be bundled in Electron or exposed
-through a `VITE_` variable. Genius scraping is not a fallback.
+applicable lyric-content rights and written Spotify approval before public
+release. If those approvals are obtained, a contracted provider may still be
+the appropriate production path; its secret key must never be bundled in
+Electron or exposed through a `VITE_` variable. Genius scraping is not a
+fallback.
 
 ### Local settings
 
@@ -348,6 +361,11 @@ Electron version, macOS version, CPU architecture, and result of each check.
 - [ ] Sleep/wake and a temporary network interruption recover cleanly.
 - [ ] A non-Premium account receives a clear explanation.
 - [ ] Spotify rate limiting backs off without a retry loop.
+- [ ] With Experimental LRCLIB off, no request is sent to LRCLIB.
+- [ ] With it on, a local `.lrc` wins; otherwise a matching synchronized LRCLIB
+      result appears without persisting lyric text to disk.
+- [ ] Disabling the experiment and signing out cancel active lyric requests and
+      clear the in-memory provider caches.
 - [ ] Tokens and private data are absent from logs.
 
 ## Packaging
@@ -416,10 +434,13 @@ Spotify's Web Playback SDK.
 
 ### Lyrics are unavailable
 
-Import a matching licensed `.lrc` file. Aura will store it locally and match it
-automatically the next time that track appears. Aura Player must not invent
-lyrics, silently scrape an unapproved source, or transmit Spotify metadata to a
-third-party lyric service without the required rights and approval.
+Import a matching licensed `.lrc` file; Aura stores it locally and matches it
+automatically the next time that track appears. For personal development, the
+Experimental LRCLIB switch in Settings can try a community synchronized result
+after a local miss. Enabling it sends title, artist, album, and duration to
+LRCLIB. A miss, instrumental record, cooldown, or network error is shown
+honestly. Public distribution remains gated on lyric rights and Spotify
+approval.
 
 ## Known limitations
 
@@ -435,6 +456,8 @@ third-party lyric service without the required rights and approval.
 - Apple signing and notarization require credentials supplied outside source
   control.
 - Spotify lyrics are unavailable through the public Web API.
+- Experimental LRCLIB is off by default, has no API key, and is not cleared for
+  public distribution.
 - Licensed lyric-provider credentials are not bundled.
 - Authorized scraper providers are off until explicitly configured.
 - Development-mode Spotify applications may be limited to allowlisted users.

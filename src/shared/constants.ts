@@ -30,6 +30,8 @@ export const WINDOW_BOUNDS = {
 } as const;
 
 export const MAX_LRC_FILE_BYTES = 2 * 1024 * 1024;
+export const LRCLIB_API_ORIGIN = "https://lrclib.net";
+export const LRCLIB_MAX_RESPONSE_BYTES = 1_000_000;
 
 export const APPROVED_EXTERNAL_HOSTS = new Set([
   "accounts.spotify.com",
@@ -57,6 +59,8 @@ export const IPC_CHANNELS = {
   lyricsReadImported: "aura:lyrics:read-imported",
   lyricsMatchImported: "aura:lyrics:match-imported",
   lyricsDeleteImported: "aura:lyrics:delete-imported",
+  lyricsLookupLrclib: "aura:lyrics:lookup-lrclib",
+  lyricsCancelLrclib: "aura:lyrics:cancel-lrclib",
   recoveryGetState: "aura:recovery:get-state",
   recoverySignal: "aura:recovery:signal",
   cacheGetInfo: "aura:cache:get-info",
@@ -71,6 +75,7 @@ export const DEFAULT_SETTINGS = {
   launchAtLogin: false,
   hideControlsAutomatically: true,
   showLyricsByDefault: true,
+  experimentalLrclibEnabled: false,
   lyricOffsetMs: 0,
   motionIntensity: 0.72,
   backgroundBlur: 0.72,

@@ -30,6 +30,10 @@ import {
   importedLrcFileSchema,
   importedLrcIdRequestSchema,
   importedLrcRecordsSchema,
+  lrclibCancelRequestSchema,
+  lrclibLookupCancelResultSchema,
+  lrclibLookupRequestSchema,
+  lrclibLyricsLookupResultSchema,
   lyricsImportRequestSchema,
   lyricsMatchRequestSchema,
   menuNowPlayingStateSchema,
@@ -45,15 +49,24 @@ import type {
   ImportedLrcDeleteResult,
   ImportedLrcFile,
   ImportedLrcRecord,
+  LrclibLookupCancelResult,
+  LrclibLyricsLookupResult,
   LyricsTrackIdentity,
   MenuNowPlayingState,
 } from "../shared/types";
 import type { SpotifyAuthService } from "./auth";
 import { ImportedLyricsStore } from "./lyrics-store";
+import {
+  type LrclibLyricsOutcome,
+  LrclibLyricsService,
+} from "./lrclib-lyrics-service";
 import type { MenuBarController } from "./menu";
 import type { RecoveryMonitor } from "./recovery-monitor";
 import type { SettingsStore } from "./secure-store";
 import { isApprovedExternalUrl } from "./windows";
+
+const LRCLIB_SENDER_WINDOW_MS = 5 * 60 * 1_000;
+const LRCLIB_MAX_LOOKUPS_PER_WINDOW = 30;
 
 interface IpcDependencies {
   getMainWindow: () => BrowserWindow | null;
@@ -61,6 +74,7 @@ interface IpcDependencies {
   settings: SettingsStore;
   menuBar: MenuBarController;
   recovery: RecoveryMonitor;
+  lrclib: LrclibLyricsService;
 }
 
 type Handler<TPayload, TResult> = (
@@ -74,8 +88,14 @@ export function registerIpcHandlers({
   settings,
   menuBar,
   recovery,
+  lrclib,
 }: IpcDependencies): () => void {
   const registeredChannels: string[] = [];
+  const activeLrclibLookups = new Map<
+    string,
+    { controller: AbortController; senderId: number }
+  >();
+  const lrclibRequestHistory = new Map<number, number[]>();
   const lyricsStore = new ImportedLyricsStore(
     path.join(app.getPath("userData"), "lyrics"),
   );
@@ -158,6 +178,13 @@ export function registerIpcHandlers({
       if (next.menuBarEnabled !== previous.menuBarEnabled) {
         menuBar.setEnabled(next.menuBarEnabled);
       }
+      if (
+        previous.experimentalLrclibEnabled &&
+        !next.experimentalLrclibEnabled
+      ) {
+        abortActiveLrclibLookups(activeLrclibLookups);
+        lrclib.clearCache();
+      }
 
       return next;
     },
@@ -228,6 +255,93 @@ export function registerIpcHandlers({
         await lyricsStore.delete(id),
       ),
   );
+  register(
+    IPC_CHANNELS.lyricsLookupLrclib,
+    lrclibLookupRequestSchema,
+    async (
+      { requestId, track },
+      event,
+    ): Promise<LrclibLyricsLookupResult> => {
+      if (activeLrclibLookups.has(requestId)) {
+        throw new Error("This lyrics lookup request is already active.");
+      }
+      if (
+        [...activeLrclibLookups.values()].some(
+          ({ senderId }) => senderId === event.sender.id,
+        )
+      ) {
+        throw new Error("A lyrics lookup is already active for this window.");
+      }
+
+      const controller = new AbortController();
+      const activeLookup = {
+        controller,
+        senderId: event.sender.id,
+      };
+      const abortWhenSenderCloses = () => {
+        lrclibRequestHistory.delete(event.sender.id);
+        if (activeLrclibLookups.get(requestId) === activeLookup) {
+          activeLrclibLookups.delete(requestId);
+        }
+        controller.abort(
+          new DOMException("The lyrics window was closed.", "AbortError"),
+        );
+      };
+      activeLrclibLookups.set(requestId, activeLookup);
+      event.sender.once("destroyed", abortWhenSenderCloses);
+
+      try {
+        const currentSettings = await settings.get();
+        if (!currentSettings.experimentalLrclibEnabled) {
+          return lrclibLyricsLookupResultSchema.parse({
+            status: "disabled",
+            provider: "lrclib",
+          });
+        }
+        controller.signal.throwIfAborted();
+        const localRetryAfterMs = consumeLrclibRequestBudget(
+          lrclibRequestHistory,
+          event.sender.id,
+          Date.now(),
+        );
+        if (localRetryAfterMs > 0) {
+          return lrclibLyricsLookupResultSchema.parse({
+            status: "rate-limited",
+            provider: "lrclib",
+            retryAfterMs: localRetryAfterMs,
+          });
+        }
+        const outcome = await lrclib.lookup(track, controller.signal);
+        return lrclibLyricsLookupResultSchema.parse(
+          mapLrclibOutcome(outcome),
+        );
+      } finally {
+        event.sender.removeListener("destroyed", abortWhenSenderCloses);
+        if (activeLrclibLookups.get(requestId) === activeLookup) {
+          activeLrclibLookups.delete(requestId);
+        }
+      }
+    },
+  );
+  register(
+    IPC_CHANNELS.lyricsCancelLrclib,
+    lrclibCancelRequestSchema,
+    ({ requestId }, event): LrclibLookupCancelResult => {
+      const activeLookup = activeLrclibLookups.get(requestId);
+      const cancelled =
+        activeLookup !== undefined &&
+        activeLookup.senderId === event.sender.id;
+
+      if (cancelled) {
+        activeLrclibLookups.delete(requestId);
+        activeLookup.controller.abort(
+          new DOMException("The lyrics lookup was cancelled.", "AbortError"),
+        );
+      }
+
+      return lrclibLookupCancelResultSchema.parse({ cancelled });
+    },
+  );
 
   register(
     IPC_CHANNELS.recoveryGetState,
@@ -251,6 +365,7 @@ export function registerIpcHandlers({
     emptyIpcPayloadSchema,
     async (): Promise<CacheClearResult> => {
       await requireMainWindow(getMainWindow()).webContents.session.clearCache();
+      lrclib.clearCache();
       return cacheClearResultSchema.parse({ cleared: true });
     },
   );
@@ -264,6 +379,11 @@ export function registerIpcHandlers({
   );
 
   const unsubscribeAuth = auth.subscribe((state) => {
+    if (state.status !== "authenticated") {
+      abortActiveLrclibLookups(activeLrclibLookups);
+      lrclibRequestHistory.clear();
+      lrclib.clearCache();
+    }
     const window = getMainWindow();
     if (window !== null && !window.isDestroyed()) {
       window.webContents.send(IPC_CHANNELS.authStateChanged, state);
@@ -280,10 +400,86 @@ export function registerIpcHandlers({
   return () => {
     unsubscribeAuth();
     unsubscribeRecovery();
+    abortActiveLrclibLookups(activeLrclibLookups);
+    lrclibRequestHistory.clear();
+    lrclib.clearCache();
     for (const channel of registeredChannels) {
       ipcMain.removeHandler(channel);
     }
   };
+}
+
+function consumeLrclibRequestBudget(
+  histories: Map<number, number[]>,
+  senderId: number,
+  now: number,
+): number {
+  const cutoff = now - LRCLIB_SENDER_WINDOW_MS;
+  const recent = (histories.get(senderId) ?? []).filter(
+    (timestamp) => timestamp > cutoff,
+  );
+  if (recent.length >= LRCLIB_MAX_LOOKUPS_PER_WINDOW) {
+    histories.set(senderId, recent);
+    return Math.max(
+      1,
+      (recent[0] ?? now) + LRCLIB_SENDER_WINDOW_MS - now,
+    );
+  }
+
+  recent.push(now);
+  histories.set(senderId, recent);
+  return 0;
+}
+
+function mapLrclibOutcome(
+  outcome: LrclibLyricsOutcome,
+): LrclibLyricsLookupResult {
+  switch (outcome.status) {
+    case "found":
+      return {
+        status: "found",
+        provider: "lrclib",
+        format: "lrc",
+        content: outcome.syncedLyrics,
+      };
+    case "instrumental":
+      return { status: "instrumental", provider: "lrclib" };
+    case "not-found":
+      return { status: "not-found", provider: "lrclib" };
+    case "rate-limited":
+      return {
+        status: "rate-limited",
+        provider: "lrclib",
+        retryAfterMs: outcome.retryAfterMs,
+      };
+    case "network-error":
+      return {
+        status: "error",
+        provider: "lrclib",
+        code: outcome.reason === "timeout" ? "timeout" : "network",
+      };
+    case "invalid-track":
+    case "malformed-response":
+      return {
+        status: "error",
+        provider: "lrclib",
+        code: "invalid-response",
+      };
+  }
+}
+
+function abortActiveLrclibLookups(
+  lookups: Map<
+    string,
+    { controller: AbortController; senderId: number }
+  >,
+): void {
+  for (const { controller } of lookups.values()) {
+    controller.abort(
+      new DOMException("Remote lyrics were disabled.", "AbortError"),
+    );
+  }
+  lookups.clear();
 }
 
 function assertTrustedSender(

@@ -141,7 +141,11 @@ export class SettingsStore {
     try {
       const contents = await readFile(this.filePath, "utf8");
       const parsed: unknown = JSON.parse(contents);
-      const result = appSettingsSchema.safeParse(parsed);
+      const result = appSettingsSchema.safeParse(
+        typeof parsed === "object" && parsed !== null
+          ? { ...defaultSettings, ...parsed }
+          : parsed,
+      );
 
       return result.success ? result.data : { ...defaultSettings };
     } catch (error) {

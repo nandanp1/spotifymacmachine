@@ -12,6 +12,7 @@ export interface AppSettings {
   launchAtLogin: boolean;
   hideControlsAutomatically: boolean;
   showLyricsByDefault: boolean;
+  experimentalLrclibEnabled: boolean;
   lyricOffsetMs: number;
   motionIntensity: number;
   backgroundBlur: number;
@@ -71,6 +72,10 @@ export interface LyricsTrackIdentity {
   isrc?: string;
 }
 
+export interface LrclibTrackIdentity extends LyricsTrackIdentity {
+  album: string;
+}
+
 export interface ImportedLrcRecord {
   id: string;
   fileName: string;
@@ -90,6 +95,32 @@ export interface ImportedLrcFile extends ImportedLrcRecord {
 
 export interface ImportedLrcDeleteResult {
   deleted: boolean;
+}
+
+export type LrclibLyricsLookupResult =
+  | {
+      status: "found";
+      provider: "lrclib";
+      format: "lrc" | "plain";
+      content: string;
+    }
+  | {
+      status: "not-found" | "instrumental" | "disabled";
+      provider: "lrclib";
+    }
+  | {
+      status: "rate-limited";
+      provider: "lrclib";
+      retryAfterMs: number;
+    }
+  | {
+      status: "error";
+      provider: "lrclib";
+      code: "network" | "timeout" | "invalid-response";
+    };
+
+export interface LrclibLookupCancelResult {
+  cancelled: boolean;
 }
 
 export interface CacheClearResult {
@@ -160,6 +191,11 @@ export interface AuraDesktopApi {
       track: LyricsTrackIdentity,
     ): Promise<ImportedLrcFile | null>;
     deleteImported(id: string): Promise<ImportedLrcDeleteResult>;
+    lookupLrclib(
+      requestId: string,
+      track: LrclibTrackIdentity,
+    ): Promise<LrclibLyricsLookupResult>;
+    cancelLrclib(requestId: string): Promise<LrclibLookupCancelResult>;
   };
   readonly recovery: {
     getState(): Promise<RecoveryState>;

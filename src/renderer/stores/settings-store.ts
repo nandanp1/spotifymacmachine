@@ -268,6 +268,10 @@ function validateSettings(
       candidate.showLyricsByDefault,
       fallback.showLyricsByDefault,
     ),
+    experimentalLrclibEnabled: booleanOr(
+      candidate.experimentalLrclibEnabled,
+      fallback.experimentalLrclibEnabled,
+    ),
     lyricOffsetMs: Math.round(
       clampNumber(
         candidate.lyricOffsetMs,
@@ -315,6 +319,7 @@ function settingsFromSnapshot(snapshot: SettingsStoreSnapshot): AppSettings {
     launchAtLogin: snapshot.launchAtLogin,
     hideControlsAutomatically: snapshot.hideControlsAutomatically,
     showLyricsByDefault: snapshot.showLyricsByDefault,
+    experimentalLrclibEnabled: snapshot.experimentalLrclibEnabled,
     lyricOffsetMs: snapshot.lyricOffsetMs,
     motionIntensity: snapshot.motionIntensity,
     backgroundBlur: snapshot.backgroundBlur,

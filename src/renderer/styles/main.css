@@ -2014,6 +2014,225 @@ input:disabled {
   outline-offset: 3px;
 }
 
+.experimental-lyrics-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  margin-top: 17px;
+  padding: 14px 15px 15px 17px;
+  border: 1px solid rgba(216, 183, 122, 0.18);
+  border-radius: 10px;
+  background:
+    radial-gradient(
+      ellipse at 3% 0%,
+      rgba(216, 183, 122, 0.11),
+      transparent 48%
+    ),
+    linear-gradient(
+      145deg,
+      rgba(241, 238, 231, 0.045),
+      rgba(8, 10, 13, 0.36)
+    );
+  transition:
+    border-color 240ms ease,
+    background-color 240ms ease;
+}
+
+.experimental-lyrics-card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 13px;
+  bottom: 13px;
+  left: 0;
+  width: 2px;
+  background: linear-gradient(
+    transparent,
+    rgba(216, 183, 122, 0.74) 24%,
+    rgba(216, 183, 122, 0.34) 78%,
+    transparent
+  );
+  opacity: 0.5;
+  transition: opacity 240ms ease;
+}
+
+.experimental-lyrics-card--enabled {
+  border-color: rgba(216, 183, 122, 0.38);
+  background-color: rgba(216, 183, 122, 0.025);
+}
+
+.experimental-lyrics-card--enabled::before {
+  opacity: 1;
+}
+
+.experimental-lyrics-card__folio {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 11px;
+  color: rgba(241, 238, 231, 0.32);
+  font-size: calc(7px * var(--text-scale));
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.experimental-lyrics-card--enabled
+  .experimental-lyrics-card__folio
+  span:last-child {
+  color: var(--champagne);
+}
+
+.experimental-lyrics-card__toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  cursor: pointer;
+}
+
+.experimental-lyrics-card__identity {
+  min-width: 0;
+}
+
+.experimental-lyrics-card__identity strong,
+.experimental-lyrics-card__identity small {
+  display: block;
+}
+
+.experimental-lyrics-card__identity strong {
+  color: var(--bone);
+  font-family: var(--font-display);
+  font-size: calc(20px * var(--text-scale));
+  font-weight: 570;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+}
+
+.experimental-lyrics-card__identity small {
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: calc(8px * var(--text-scale));
+  letter-spacing: 0.04em;
+}
+
+.experimental-lyrics-card__toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.experimental-lyrics-card__control {
+  width: 37px;
+  height: 20px;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid rgba(241, 238, 231, 0.25);
+  border-radius: 999px;
+  background: rgba(241, 238, 231, 0.06);
+  transition:
+    border-color 200ms ease,
+    background 200ms ease;
+}
+
+.experimental-lyrics-card__control span {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--mist);
+  box-shadow: 0 0 0 rgba(216, 183, 122, 0);
+  transition:
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.experimental-lyrics-card__toggle
+  input:checked
+  + .experimental-lyrics-card__control {
+  border-color: var(--champagne);
+  background: rgba(216, 183, 122, 0.2);
+}
+
+.experimental-lyrics-card__toggle
+  input:checked
+  + .experimental-lyrics-card__control
+  span {
+  background: var(--champagne);
+  box-shadow: 0 0 14px rgba(216, 183, 122, 0.3);
+  transform: translateX(17px);
+}
+
+.experimental-lyrics-card__toggle
+  input:focus-visible
+  + .experimental-lyrics-card__control {
+  outline: 2px solid var(--champagne);
+  outline-offset: 3px;
+}
+
+.experimental-lyrics-card__disclosure {
+  margin: 14px 0 0;
+  color: rgba(241, 238, 231, 0.56);
+  font-size: calc(9px * var(--text-scale));
+  line-height: 1.52;
+}
+
+.experimental-lyrics-card__policy {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid rgba(241, 238, 231, 0.075);
+  list-style: none;
+}
+
+.experimental-lyrics-card__policy li {
+  min-width: 0;
+}
+
+.experimental-lyrics-card__policy strong,
+.experimental-lyrics-card__policy span {
+  display: block;
+}
+
+.experimental-lyrics-card__policy strong {
+  color: rgba(241, 238, 231, 0.72);
+  font-size: calc(7px * var(--text-scale));
+  font-weight: 680;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.experimental-lyrics-card__policy span {
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: calc(8px * var(--text-scale));
+  line-height: 1.4;
+}
+
+.experimental-lyrics-card__status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  margin: 13px 0 0;
+  padding-top: 11px;
+  border-top: 1px solid rgba(241, 238, 231, 0.075);
+  color: var(--faint);
+  font-size: calc(8px * var(--text-scale));
+  line-height: 1.4;
+}
+
+.experimental-lyrics-card__status strong {
+  color: var(--champagne);
+  font-weight: 660;
+}
+
 .mode-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2469,6 +2688,13 @@ input:disabled {
     transition: none;
   }
 
+  .experimental-lyrics-card,
+  .experimental-lyrics-card::before,
+  .experimental-lyrics-card__control,
+  .experimental-lyrics-card__control span {
+    transition: none;
+  }
+
   .instrumental-motif i,
   .lyrics-loading-score span {
     animation: none;
@@ -2506,5 +2732,29 @@ input:disabled {
 
   .lyric-line--active .lyric-marker__fill {
     transform: scaleY(1);
+  }
+
+  .experimental-lyrics-card,
+  .experimental-lyrics-card--enabled {
+    border-color: var(--bone);
+    background: rgba(2, 3, 4, 0.94);
+  }
+
+  .experimental-lyrics-card::before {
+    background: var(--champagne);
+    opacity: 1;
+  }
+
+  .experimental-lyrics-card__folio,
+  .experimental-lyrics-card__identity small,
+  .experimental-lyrics-card__disclosure,
+  .experimental-lyrics-card__policy span,
+  .experimental-lyrics-card__status {
+    color: var(--bone);
+  }
+
+  .experimental-lyrics-card__control {
+    border-color: var(--bone);
+    background: transparent;
   }
 }

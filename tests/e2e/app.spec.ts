@@ -76,6 +76,51 @@ test("opens secondary surfaces and honors keyboard lyric controls", async () => 
   await expect(window.getByText("Darkroom score")).toBeVisible();
 });
 
+test("keeps experimental LRCLIB off by default and persists explicit opt-in", async () => {
+  const window = await application.firstWindow();
+  const settingsDialog = window.getByRole("dialog", {
+    name: "Tune the room",
+  });
+
+  await window.getByRole("button", { name: "Open settings" }).click();
+  await expect(settingsDialog).toBeVisible();
+
+  const experimentalLrclib = settingsDialog.getByRole("switch", {
+    name: "Experimental LRCLIB",
+  });
+  await expect(experimentalLrclib).not.toBeChecked();
+  await expect
+    .poll(() =>
+      window.evaluate(() =>
+        globalThis.window.aura.settings
+          .get()
+          .then((value) => value.experimentalLrclibEnabled),
+      ),
+    )
+    .toBe(false);
+
+  await experimentalLrclib.click();
+  await expect(experimentalLrclib).toBeChecked();
+  await expect
+    .poll(() =>
+      window.evaluate(() =>
+        globalThis.window.aura.settings
+          .get()
+          .then((value) => value.experimentalLrclibEnabled),
+      ),
+    )
+    .toBe(true);
+
+  await window.keyboard.press("Escape");
+  await expect(settingsDialog).toBeHidden();
+  await window.getByRole("button", { name: "Open settings" }).click();
+  await expect(settingsDialog).toBeVisible();
+  await expect(experimentalLrclib).toBeChecked();
+
+  await window.keyboard.press("Escape");
+  await expect(settingsDialog).toBeHidden();
+});
+
 test("persists visual preferences and validates the fullscreen bridge", async () => {
   const window = await application.firstWindow();
 
