@@ -267,8 +267,8 @@ export class SpotifyAuthService {
     }
     this.assertCurrentLifecycle(lifecycle);
 
-    // This value is intentionally returned only on demand for Spotify's Web
-    // Playback SDK. The renderer must keep it in memory and never persist it.
+    // This short-lived value is returned only when the renderer needs to call
+    // Spotify's Web API. The renderer must keep it in memory and never persist it.
     return {
       accessToken: tokens.accessToken,
       expiresAt: tokens.expiresAt,

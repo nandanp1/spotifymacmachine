@@ -125,6 +125,30 @@ describe("lyrics identity matching", () => {
     });
   });
 
+  it("prefers the newest import when exact-match scores tie", async () => {
+    const provider = new LocalLrcProvider([
+      {
+        id: "older",
+        fileName: "older.lrc",
+        contents: "[00:01.00]Older original line",
+        spotifyTrackId: track.spotifyTrackId,
+        importedAt: 1_700_000_000_000,
+      },
+      {
+        id: "newer",
+        fileName: "newer.lrc",
+        contents: "[00:01.00]Newer original line",
+        spotifyTrackId: track.spotifyTrackId,
+        importedAt: 1_800_000_000_000,
+      },
+    ]);
+
+    await expect(provider.findLyrics(track)).resolves.toMatchObject({
+      source: "newer.lrc",
+      lines: [{ text: "Newer original line" }],
+    });
+  });
+
   it("rejects malformed imports before mutating the local collection", () => {
     const provider = new LocalLrcProvider();
 

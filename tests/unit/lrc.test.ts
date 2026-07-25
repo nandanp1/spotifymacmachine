@@ -107,4 +107,16 @@ describe("LRC document parsing", () => {
     );
     expect(() => parseLrcLyrics("[ti:Untimed]")).toThrow(LrcParseError);
   });
+
+  it("rejects pathological transcripts before they can overload the renderer", () => {
+    const oversizedTranscript = Array.from({ length: 3_001 }, (_, index) => {
+      const minutes = Math.floor(index / 60);
+      const seconds = String(index % 60).padStart(2, "0");
+      return `[${minutes}:${seconds}.00]Original line ${index}`;
+    }).join("\n");
+
+    expect(() => parseLrc(oversizedTranscript)).toThrow(
+      "more than 3,000 timed lyric lines",
+    );
+  });
 });

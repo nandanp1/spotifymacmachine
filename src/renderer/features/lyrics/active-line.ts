@@ -54,6 +54,100 @@ export function getActiveLyricIndex(
 
 export const findActiveLyricLineIndex = getActiveLyricIndex;
 
+export type LyricsTimelinePhase = "before" | "active" | "gap" | "after";
+
+export interface LyricsTimelineState {
+  activeIndex: number;
+  anchorIndex: number;
+  phase: LyricsTimelinePhase;
+  /**
+   * Null means the source did not provide enough timing information for a
+   * determinate line-progress indicator.
+   */
+  progress: number | null;
+}
+
+/**
+ * Describes both the honest timing state and the visual line to keep near the
+ * reading axis. Explicit gaps never mark a lyric as current.
+ */
+export function getLyricsTimelineState(
+  lines: readonly LyricsLine[],
+  positionMs: number,
+  offsetMs = 0,
+): LyricsTimelineState {
+  if (!lines.length || !Number.isFinite(positionMs)) {
+    return {
+      activeIndex: -1,
+      anchorIndex: -1,
+      phase: "before",
+      progress: 0,
+    };
+  }
+
+  const safeOffset = Number.isFinite(offsetMs) ? offsetMs : 0;
+  const effectivePosition = positionMs - safeOffset;
+  const activeIndex = getActiveLyricIndex(lines, positionMs, safeOffset);
+
+  if (activeIndex >= 0) {
+    const line = lines[activeIndex];
+    if (!line) {
+      return {
+        activeIndex: -1,
+        anchorIndex: 0,
+        phase: "before",
+        progress: 0,
+      };
+    }
+    const nextLine = lines[activeIndex + 1];
+    const endMs =
+      line.endMs !== undefined && line.endMs > line.startMs
+        ? line.endMs
+        : nextLine && nextLine.startMs > line.startMs
+          ? nextLine.startMs
+          : null;
+    return {
+      activeIndex,
+      anchorIndex: activeIndex,
+      phase: "active",
+      progress:
+        endMs === null
+          ? null
+          : clampProgress(
+              (effectivePosition - line.startMs) /
+                (endMs - line.startMs),
+            ),
+    };
+  }
+
+  const nextIndex = lines.findIndex(
+    (line) => line.startMs > effectivePosition,
+  );
+  if (nextIndex === 0) {
+    return {
+      activeIndex: -1,
+      anchorIndex: 0,
+      phase: "before",
+      progress: 0,
+    };
+  }
+  if (nextIndex > 0) {
+    return {
+      activeIndex: -1,
+      anchorIndex: nextIndex,
+      phase: "gap",
+      progress: 0,
+    };
+  }
+
+  return {
+    activeIndex: -1,
+    anchorIndex: lines.length - 1,
+    phase: "after",
+    progress: 1,
+  };
+}
+
 export interface ActiveLyricsWindow {
   activeIndex: number;
   startIndex: number;
@@ -87,4 +181,11 @@ export function getActiveLyricsWindow(
     endIndex,
     lines: lines.slice(startIndex, endIndex),
   };
+}
+
+function clampProgress(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, value));
 }

@@ -6,6 +6,7 @@ import {
   type ObservablePlaybackService,
   type PlaybackConnectionPhase,
   type PlaybackProblem,
+  type PlaybackRestrictions,
   type PlaybackService,
   type PlaybackServiceStatus,
   type PlayerState,
@@ -36,6 +37,7 @@ export interface AuraPlayerState {
   volume: number;
   deviceId: string | null;
   deviceName: string;
+  restrictions?: PlaybackRestrictions;
   problem: PlaybackProblem | null;
   observedAt: number;
 }
@@ -73,6 +75,7 @@ const INITIAL_STATE: AuraPlayerState = {
   volume: 0.72,
   deviceId: null,
   deviceName: "Aura Player — Mac",
+  restrictions: undefined,
   problem: null,
   observedAt: Date.now(),
 };
@@ -127,6 +130,7 @@ class AuraPlayerStore {
       buffering: true,
       positionMs: 0,
       durationMs: 0,
+      restrictions: undefined,
       problem: null,
       observedAt: Date.now(),
     });
@@ -298,6 +302,7 @@ class AuraPlayerStore {
       volume: clamp(options.volume ?? this.snapshot.volume, 0, 1),
       deviceId: null,
       deviceName: options.deviceName ?? "Design preview — not connected",
+      restrictions: undefined,
       problem: null,
       observedAt: Date.now(),
     });
@@ -326,8 +331,8 @@ class AuraPlayerStore {
 
     try {
       await action(this.service);
-      // Live state is intentionally not updated optimistically. Spotify's SDK
-      // subscription remains the source of truth.
+      // Live state is intentionally not updated optimistically. The selected
+      // device's next verified Spotify snapshot remains the source of truth.
     } catch (error) {
       this.patch({ problem: toPlaybackProblem(error) });
       throw error;
@@ -350,6 +355,7 @@ class AuraPlayerStore {
         buffering: false,
         positionMs: 0,
         durationMs: 0,
+        restrictions: undefined,
         observedAt: Date.now(),
       });
       return;
@@ -365,6 +371,9 @@ class AuraPlayerStore {
       durationMs: state.durationMs,
       volume: state.volume,
       deviceId: state.deviceId,
+      restrictions: state.restrictions
+        ? { ...state.restrictions }
+        : undefined,
       observedAt: state.observedAt,
     });
   }
@@ -380,6 +389,7 @@ class AuraPlayerStore {
       connectionPhase: status.phase,
       deviceId: ready ? status.deviceId : null,
       deviceName: status.deviceName,
+      restrictions: ready ? this.snapshot.restrictions : undefined,
       problem: status.problem,
       paused: ready ? this.snapshot.paused : true,
       isPlaying: ready ? this.snapshot.isPlaying : false,
@@ -505,6 +515,7 @@ function stripActions(snapshot: PlayerStoreSnapshot): AuraPlayerState {
     volume: snapshot.volume,
     deviceId: snapshot.deviceId,
     deviceName: snapshot.deviceName,
+    restrictions: snapshot.restrictions,
     problem: snapshot.problem,
     observedAt: snapshot.observedAt,
   };

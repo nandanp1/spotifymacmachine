@@ -14,13 +14,15 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type Dispatch,
+  type SetStateAction,
 } from "react";
 import type {
   AppSettings,
   AuthState,
   ImportedLrcFile,
   ImportedLrcRecord,
-  LyricsTrackIdentity,
+  LrclibTrackIdentity,
 } from "../shared/types";
 import { ArtworkStage } from "./components/ArtworkStage";
 import { CinematicBackdrop } from "./components/CinematicBackdrop";
@@ -33,22 +35,30 @@ import {
   type AuraDevice,
 } from "./components/DevicePopover";
 import { LibraryDrawer } from "./components/LibraryDrawer";
-import { LyricsPanel } from "./components/LyricsPanel";
+import {
+  LyricsPanel,
+  type LyricsPanelStatus,
+} from "./components/LyricsPanel";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { Transport } from "./components/Transport";
 import { DEMO_TRACKS, type DemoTrack } from "./demo-data";
-import { SpotifyApiClient } from "./features/devices/spotify-api";
+import {
+  SpotifyApiClient,
+  SpotifyApiError,
+  type SpotifyDevice,
+} from "./features/devices/spotify-api";
 import {
   toSpotifyOpenUrl,
   type SpotifyTrack,
 } from "./features/library";
 import { parseLrcLyrics } from "./features/lyrics/lrc";
+import { resolveLrclibLookup } from "./features/lyrics/lrclib";
 import {
   LocalLrcProvider,
   type LocalLrcEntry,
 } from "./features/lyrics/providers";
 import type { LyricsResult } from "./features/lyrics/types";
-import { SpotifyPlaybackService } from "./features/player/spotify-playback-service";
+import { SpotifyRemotePlaybackService } from "./features/player/spotify-remote-playback-service";
 import {
   getEstimatedAuraPosition,
   usePlayerStore,
@@ -62,11 +72,24 @@ interface ImportedLyrics {
   lyrics: LyricsResult;
 }
 
+interface RemoteLyrics {
+  trackId: string;
+  lyrics: LyricsResult;
+}
+
+interface LyricsLoadState {
+  trackId: string;
+  status: LyricsPanelStatus;
+  errorMessage?: string;
+}
+
 interface ToastMessage {
   id: number;
   message: string;
   tone: "info" | "warning";
 }
+
+const MAX_REMOTE_LYRICS_TRACKS = 32;
 
 const SPOTIFY_IDLE_TRACK: DemoTrack = {
   id: "aura-spotify-idle",
@@ -92,8 +115,11 @@ const SPOTIFY_IDLE_TRACK: DemoTrack = {
 
 export function App() {
   const player = usePlayerStore();
+  const disconnectPlayer = player.disconnect;
   const settings = useSettingsStore();
-  const playbackServiceRef = useRef<SpotifyPlaybackService | null>(null);
+  const playbackServiceRef =
+    useRef<SpotifyRemotePlaybackService | null>(null);
+  const playbackStatusUnsubscribeRef = useRef<(() => void) | null>(null);
   const activityTimerRef = useRef<number | null>(null);
   const didInitializeDemoRef = useRef(false);
   const didApplyLyricsPreferenceRef = useRef(false);
@@ -120,6 +146,8 @@ export function App() {
   >(undefined);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const [devices, setDevices] = useState<AuraDevice[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<AuraDevice | null>(null);
+  const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null);
   const [deviceLoadState, setDeviceLoadState] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
@@ -128,15 +156,28 @@ export function App() {
   const [lyricsVisible, setLyricsVisible] = useState(true);
   const [demoTrackIndex, setDemoTrackIndex] = useState(0);
   const [positionMs, setPositionMs] = useState(43_000);
-  const [importedLyrics, setImportedLyrics] = useState<ImportedLyrics | null>(
-    null,
-  );
+  const [importedLyricsByTrack, setImportedLyricsByTrack] = useState<
+    Record<string, ImportedLyrics>
+  >({});
+  const [remoteLyricsByTrack, setRemoteLyricsByTrack] = useState<
+    Record<string, RemoteLyrics>
+  >({});
   const [importedLyricsRecords, setImportedLyricsRecords] = useState<
     ImportedLrcRecord[]
   >([]);
+  const [lyricsLoadState, setLyricsLoadState] = useState<LyricsLoadState>({
+    trackId: "",
+    status: "loading",
+  });
+  const [lyricsRevision, setLyricsRevision] = useState(0);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   const connected = authState.status === "authenticated";
+  const remotePlaybackReady =
+    connected &&
+    selectedDevice !== null &&
+    player.connectionPhase === "ready" &&
+    player.deviceId === selectedDevice.id;
   const spotifyApiClient = useMemo(
     () => (hasDesktopApi() ? createSpotifyApiClient() : null),
     [],
@@ -154,25 +195,50 @@ export function App() {
     DEMO_TRACKS[0];
   const displayTrack =
     liveDisplayTrack ??
-    (player.source === "spotify" ? SPOTIFY_IDLE_TRACK : currentDemo);
+    (connected || player.source === "spotify"
+      ? SPOTIFY_IDLE_TRACK
+      : currentDemo);
+  const isLiveSpotifyTrack = liveDisplayTrack !== null;
+  const displayTrackIdRef = useRef(displayTrack.id);
+  const importedLyrics = importedLyricsByTrack[displayTrack.id] ?? null;
+  const remoteLyrics = settings.experimentalLrclibEnabled
+    ? remoteLyricsByTrack[displayTrack.id] ?? null
+    : null;
   const displayLyrics =
-    importedLyrics?.trackId === displayTrack.id
-      ? importedLyrics.lyrics
-      : displayTrack.lyrics;
-  const lyricsIdentity = useMemo<LyricsTrackIdentity>(
+    importedLyrics?.lyrics ?? remoteLyrics?.lyrics ?? displayTrack.lyrics;
+  const displayLyricsStatus: LyricsPanelStatus = displayLyrics
+    ? "ready"
+    : displayTrack.id === SPOTIFY_IDLE_TRACK.id
+      ? "idle"
+      : lyricsLoadState.trackId === displayTrack.id
+        ? lyricsLoadState.status
+        : "loading";
+  const experimentalLyricsStatus = !settings.experimentalLrclibEnabled
+    ? undefined
+    : remoteLyrics
+      ? "A memory-only LRCLIB match is active for this track."
+      : lyricsLoadState.trackId === displayTrack.id &&
+          lyricsLoadState.status === "loading"
+        ? "Checking local lyric sheets before contacting LRCLIB…"
+        : lyricsLoadState.trackId === displayTrack.id &&
+            lyricsLoadState.errorMessage
+          ? lyricsLoadState.errorMessage
+          : "Enabled. Aura contacts LRCLIB only after a local .lrc miss.";
+  const lyricsArtist = displayTrack.artists?.[0] ?? displayTrack.artist;
+  const lyricsIdentity = useMemo<LrclibTrackIdentity>(
     () => ({
       spotifyTrackId: displayTrack.id,
       title: displayTrack.title,
-      artist: displayTrack.artist,
+      artist: lyricsArtist,
       album: displayTrack.album,
       durationMs: displayTrack.durationMs,
     }),
     [
       displayTrack.album,
-      displayTrack.artist,
       displayTrack.durationMs,
       displayTrack.id,
       displayTrack.title,
+      lyricsArtist,
     ],
   );
 
@@ -184,36 +250,9 @@ export function App() {
     [],
   );
 
-  const startSpotifyPlayback = useCallback(async () => {
-    if (!hasDesktopApi()) {
-      throw new Error("Spotify sign-in is available in the desktop build.");
-    }
-    if (playbackServiceRef.current) {
-      return;
-    }
-
-    const service = new SpotifyPlaybackService({
-      deviceName: settings.deviceName,
-      initialVolume: player.volume,
-      getOAuthToken: async () => {
-        const token = await window.aura.auth.getWebPlaybackToken();
-        return token.accessToken;
-      },
-    });
-    playbackServiceRef.current = service;
-
-    try {
-      await player.connect(service);
-    } catch (error) {
-      playbackServiceRef.current = null;
-      try {
-        await player.disconnect();
-      } catch {
-        // The original playback error is the useful one for the user.
-      }
-      throw error;
-    }
-  }, [player, settings.deviceName]);
+  useEffect(() => {
+    displayTrackIdRef.current = displayTrack.id;
+  }, [displayTrack.id]);
 
   useEffect(() => {
     if (didInitializeDemoRef.current) return;
@@ -247,6 +286,19 @@ export function App() {
         setConnectionError(undefined);
         return;
       }
+      setRemoteLyricsByTrack((current) =>
+        Object.keys(current).length > 0 ? {} : current,
+      );
+      if (playbackServiceRef.current) {
+        playbackStatusUnsubscribeRef.current?.();
+        playbackStatusUnsubscribeRef.current = null;
+        playbackServiceRef.current = null;
+        setSelectedDevice(null);
+        setPendingDeviceId(null);
+        void disconnectPlayer().catch(() => {
+          // The auth error remains the canonical recovery message.
+        });
+      }
       if (state.status === "signedOut") {
         setConnectionState("preview");
         setConnectionError(undefined);
@@ -275,7 +327,7 @@ export function App() {
       active = false;
       unsubscribe();
     };
-  }, []);
+  }, [disconnectPlayer]);
 
   useEffect(() => {
     if (!hasDesktopApi()) return;
@@ -295,53 +347,134 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!hasDesktopApi()) return;
-    const controller = new AbortController();
     const trackId = displayTrack.id;
+    if (!hasDesktopApi()) {
+      const frame = window.requestAnimationFrame(() => {
+        setLyricsLoadState({
+          trackId,
+          status: displayTrack.lyrics ? "ready" : "unavailable",
+        });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
 
-    void window.aura.lyrics
-      .matchImported(lyricsIdentity)
-      .then(async (file) => {
-        if (controller.signal.aborted) return;
-        if (!file) {
-          setImportedLyrics((current) =>
-            current?.trackId === trackId ? null : current,
-          );
-          return;
+    const controller = new AbortController();
+    let lrclibRequestId: string | null = null;
+
+    const removeTrackEntry = <Value,>(
+      update: Dispatch<SetStateAction<Record<string, Value>>>,
+    ) => {
+      update((current) => {
+        if (!(trackId in current)) {
+          return current;
         }
+        const next = { ...current };
+        delete next[trackId];
+        return next;
+      });
+    };
 
+    const loadLyrics = async () => {
+      setLyricsLoadState({ trackId, status: "loading" });
+      const file = await window.aura.lyrics.matchImported(lyricsIdentity);
+      if (controller.signal.aborted) return;
+
+      if (file) {
         localLyricsProvider.addEntry(toLocalLrcEntry(file));
-        const lyrics = await localLyricsProvider.findLyrics(
-          lyricsIdentity,
-          controller.signal,
-        );
-        if (!lyrics || controller.signal.aborted) return;
-        setImportedLyrics({ trackId, file, lyrics });
-      })
-      .catch((error) => {
+        const lyrics = parseLrcLyrics(file.content, file.fileName);
         if (controller.signal.aborted) return;
+        setImportedLyricsByTrack((current) => ({
+          ...current,
+          [trackId]: { trackId, file, lyrics },
+        }));
+        removeTrackEntry(setRemoteLyricsByTrack);
+        setLyricsLoadState({ trackId, status: "ready" });
+        return;
+      }
+
+      removeTrackEntry(setImportedLyricsByTrack);
+
+      if (
+        !settings.experimentalLrclibEnabled ||
+        !isLiveSpotifyTrack
+      ) {
+        removeTrackEntry(setRemoteLyricsByTrack);
+        setLyricsLoadState({
+          trackId,
+          status: displayTrack.lyrics ? "ready" : "unavailable",
+        });
+        return;
+      }
+
+      lrclibRequestId = crypto.randomUUID();
+      const result = await window.aura.lyrics.lookupLrclib(
+        lrclibRequestId,
+        lyricsIdentity,
+      );
+      if (controller.signal.aborted) return;
+
+      const resolution = resolveLrclibLookup(result, displayTrack.title);
+      if (resolution.kind === "lyrics") {
+        setRemoteLyricsByTrack((current) =>
+          addBoundedTrackEntry(
+            current,
+            trackId,
+            {
+              trackId,
+              lyrics: resolution.lyrics,
+            },
+            MAX_REMOTE_LYRICS_TRACKS,
+          ),
+        );
+        setLyricsLoadState({ trackId, status: "ready" });
+        return;
+      }
+
+      removeTrackEntry(setRemoteLyricsByTrack);
+      if (resolution.kind === "disabled") {
+        setLyricsLoadState({ trackId, status: "unavailable" });
+        return;
+      }
+      setLyricsLoadState({
+        trackId,
+        status:
+          resolution.kind === "error" ? "error" : "unavailable",
+        errorMessage: resolution.message,
+      });
+    };
+
+    void loadLyrics().catch((error) => {
+        if (controller.signal.aborted) return;
+        const message = readError(error);
+        removeTrackEntry(setRemoteLyricsByTrack);
+        setLyricsLoadState({
+          trackId,
+          status: displayTrack.lyrics ? "ready" : "error",
+          ...(displayTrack.lyrics ? {} : { errorMessage: message }),
+        });
         showToast(
-          `Saved lyrics for this track could not be loaded. ${readError(error)}`,
+          `Lyrics for this track could not be loaded. ${message}`,
           "warning",
         );
       });
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (lrclibRequestId !== null) {
+        void window.aura.lyrics.cancelLrclib(lrclibRequestId);
+      }
+    };
   }, [
     displayTrack.id,
+    displayTrack.lyrics,
+    displayTrack.title,
+    isLiveSpotifyTrack,
     localLyricsProvider,
     lyricsIdentity,
+    lyricsRevision,
+    settings.experimentalLrclibEnabled,
     showToast,
   ]);
-
-  useEffect(() => {
-    if (!settings.hydrated || !connected || playbackServiceRef.current) return;
-    void startSpotifyPlayback().catch((error) => {
-      setConnectionError(readError(error));
-      setConnectionState("error");
-      showToast("Spotify is signed in, but playback could not initialize.", "warning");
-    });
-  }, [connected, settings.hydrated, showToast, startSpotifyPlayback]);
 
   const handleOpenSettings = useCallback(() => {
     setSettingsOpen(true);
@@ -424,6 +557,8 @@ export function App() {
       if (activityTimerRef.current !== null) {
         window.clearTimeout(activityTimerRef.current);
       }
+      playbackStatusUnsubscribeRef.current?.();
+      playbackStatusUnsubscribeRef.current = null;
     },
     [],
   );
@@ -435,6 +570,8 @@ export function App() {
       if (!track) return;
 
       if (player.source === "spotify") {
+        playbackStatusUnsubscribeRef.current?.();
+        playbackStatusUnsubscribeRef.current = null;
         await player.disconnect();
         playbackServiceRef.current = null;
       }
@@ -450,21 +587,42 @@ export function App() {
   );
 
   const handlePlayPause = useCallback(() => {
+    if (connected && !remotePlaybackReady) {
+      setDevicesOpen(true);
+      showToast("Choose the Spotify device Aura should control.", "warning");
+      return;
+    }
     void player.togglePlayback().catch((error) => {
       showToast(readError(error), "warning");
     });
-  }, [player, showToast]);
+  }, [connected, player, remotePlaybackReady, showToast]);
 
   const handleNext = useCallback(() => {
+    if (connected && !remotePlaybackReady) {
+      setDevicesOpen(true);
+      showToast("Choose the Spotify device Aura should control.", "warning");
+      return;
+    }
     if (player.source === "demo") {
       const index = DEMO_TRACKS.findIndex((track) => track.id === player.track?.id);
       void chooseDemoTrack(index < 0 ? 0 : index + 1);
       return;
     }
     void player.next().catch((error) => showToast(readError(error), "warning"));
-  }, [chooseDemoTrack, player, showToast]);
+  }, [
+    chooseDemoTrack,
+    connected,
+    player,
+    remotePlaybackReady,
+    showToast,
+  ]);
 
   const handlePrevious = useCallback(() => {
+    if (connected && !remotePlaybackReady) {
+      setDevicesOpen(true);
+      showToast("Choose the Spotify device Aura should control.", "warning");
+      return;
+    }
     if (player.source === "demo") {
       if (positionMs > 5_000) {
         void player.seek(0);
@@ -477,24 +635,54 @@ export function App() {
     void player
       .previous()
       .catch((error) => showToast(readError(error), "warning"));
-  }, [chooseDemoTrack, player, positionMs, showToast]);
+  }, [
+    chooseDemoTrack,
+    connected,
+    player,
+    positionMs,
+    remotePlaybackReady,
+    showToast,
+  ]);
 
   const handleSeek = useCallback(
     (nextPosition: number) => {
+      if (connected && !remotePlaybackReady) {
+        setDevicesOpen(true);
+        showToast("Choose the Spotify device Aura should control.", "warning");
+        return;
+      }
       void player
         .seek(nextPosition)
         .catch((error) => showToast(readError(error), "warning"));
     },
-    [player, showToast],
+    [connected, player, remotePlaybackReady, showToast],
   );
 
   const handleVolume = useCallback(
     (volume: number) => {
+      if (
+        connected &&
+        (!remotePlaybackReady || selectedDevice?.supportsVolume !== true)
+      ) {
+        showToast(
+          remotePlaybackReady
+            ? "The selected Spotify device does not expose volume control."
+            : "Choose the Spotify device Aura should control.",
+          "warning",
+        );
+        return;
+      }
       void player
         .setVolume(volume)
         .catch((error) => showToast(readError(error), "warning"));
     },
-    [player, showToast],
+    [
+      connected,
+      player,
+      remotePlaybackReady,
+      selectedDevice?.supportsVolume,
+      showToast,
+    ],
   );
 
   const toggleFullscreen = useCallback(() => {
@@ -586,6 +774,29 @@ export function App() {
     toggleFullscreen,
   ]);
 
+  const loadDevices = useCallback(async (): Promise<AuraDevice[]> => {
+    if (!spotifyApiClient) {
+      return [];
+    }
+
+    setDeviceLoadState("loading");
+    setDeviceError(undefined);
+    try {
+      const nextDevices = (await spotifyApiClient.getAvailableDevices())
+        .filter((device) => device.id !== null)
+        .map(mapSpotifyDevice);
+      setDevices(nextDevices);
+      setDeviceLoadState("ready");
+      return nextDevices;
+    } catch (error) {
+      const message = readError(error);
+      setDeviceLoadState("error");
+      setDeviceError(message);
+      showToast(message, "warning");
+      return [];
+    }
+  }, [showToast, spotifyApiClient]);
+
   const handleConnect = useCallback(async () => {
     if (!hasDesktopApi()) {
       setConnectionState("error");
@@ -604,7 +815,10 @@ export function App() {
         throw new Error("Spotify did not return an authenticated session.");
       }
       setConnectionState("connected");
-      await startSpotifyPlayback();
+      setConnectionOpen(false);
+      setDevicesOpen(true);
+      showToast("Spotify connected. Choose the device Aura should control.");
+      void loadDevices();
     } catch (error) {
       const message = readError(error);
       setConnectionError(message);
@@ -612,12 +826,17 @@ export function App() {
         /cancel/i.test(message) ? "cancelled" : "error",
       );
     }
-  }, [startSpotifyPlayback]);
+  }, [loadDevices, showToast]);
 
   const handleSignOut = useCallback(async () => {
     try {
+      playbackStatusUnsubscribeRef.current?.();
+      playbackStatusUnsubscribeRef.current = null;
       await player.disconnect();
       playbackServiceRef.current = null;
+      setSelectedDevice(null);
+      setPendingDeviceId(null);
+      setDevices([]);
       if (hasDesktopApi()) {
         const state = await window.aura.auth.signOut();
         setAuthState(state);
@@ -637,52 +856,88 @@ export function App() {
 
   const handleOpenDevices = useCallback(async () => {
     setDevicesOpen(true);
-    if (!connected || !spotifyApiClient) return;
+    if (!connected) return;
+    await loadDevices();
+  }, [connected, loadDevices]);
 
-    setDeviceLoadState("loading");
-    setDeviceError(undefined);
-    try {
-      const spotifyDevices = await spotifyApiClient.getAvailableDevices();
-      setDevices(
-        spotifyDevices
-          .filter((device) => device.id !== null)
-          .map((device) => ({
-            id: device.id as string,
-            name: device.name,
-            type: mapDeviceType(device.type),
-            isActive: device.isActive,
-            available: !device.isRestricted,
-          })),
-      );
-      setDeviceLoadState("ready");
-    } catch (error) {
-      const message = readError(error);
-      setDeviceLoadState("error");
-      setDeviceError(message);
-      showToast(message, "warning");
-    }
-  }, [connected, showToast, spotifyApiClient]);
-
-  const handleTransfer = useCallback(
+  const handleSelectDevice = useCallback(
     async (device: AuraDevice) => {
+      if (pendingDeviceId !== null) return;
+      setPendingDeviceId(device.id);
       try {
         if (!spotifyApiClient) {
-          throw new Error("Connect Spotify before transferring playback.");
+          throw new Error("Connect Spotify before choosing a remote device.");
         }
-        await spotifyApiClient.transferPlayback(device.id);
-        setDevices((current) =>
-          current.map((candidate) => ({
-            ...candidate,
-            isActive: candidate.id === device.id,
-          })),
+
+        if (playbackServiceRef.current) {
+          playbackStatusUnsubscribeRef.current?.();
+          playbackStatusUnsubscribeRef.current = null;
+          await player.disconnect();
+          playbackServiceRef.current = null;
+        }
+
+        if (!device.isActive) {
+          await spotifyApiClient.transferPlayback(device.id, { play: false });
+        }
+
+        const confirmed = await waitForActiveSpotifyDevice(
+          spotifyApiClient,
+          device.id,
+        );
+        const confirmedDevice = mapSpotifyDevice(confirmed.target);
+        const service = new SpotifyRemotePlaybackService({
+          api: spotifyApiClient,
+          target: {
+            id: confirmedDevice.id,
+            name: confirmedDevice.name,
+            isRestricted: !confirmedDevice.available,
+            supportsVolume: confirmedDevice.supportsVolume,
+            volumePercent: confirmed.target.volumePercent,
+          },
+        });
+
+        playbackServiceRef.current = service;
+        playbackStatusUnsubscribeRef.current = service.subscribeStatus(
+          (status) => {
+            if (
+              status.phase === "unavailable" &&
+              status.deviceId === null
+            ) {
+              setSelectedDevice((current) =>
+                current?.id === device.id ? null : current,
+              );
+            }
+          },
+        );
+        await player.connect(service);
+        setSelectedDevice(confirmedDevice);
+        setDevices(
+          confirmed.devices
+            .filter((candidate) => candidate.id !== null)
+            .map(mapSpotifyDevice),
         );
         setDevicesOpen(false);
-        showToast(`Playback transferred to ${device.name}.`);
+        setConnectionState("connected");
+        setConnectionError(undefined);
+        showToast(
+          `Remote control connected to ${confirmedDevice.name}. Audio stays on that device.`,
+        );
       } catch (error) {
+        playbackStatusUnsubscribeRef.current?.();
+        playbackStatusUnsubscribeRef.current = null;
+        playbackServiceRef.current = null;
+        setSelectedDevice(null);
+        try {
+          await player.disconnect();
+        } catch {
+          // Preserve the device-selection error as the useful message.
+        }
         showToast(readError(error), "warning");
+      } finally {
+        setPendingDeviceId(null);
       }
     },
-    [showToast, spotifyApiClient],
+    [pendingDeviceId, player, showToast, spotifyApiClient],
   );
 
   const handlePlaySpotifyTrack = useCallback(
@@ -690,24 +945,38 @@ export function App() {
       if (!spotifyApiClient) {
         throw new Error("Connect Spotify before choosing a live track.");
       }
+      const deviceId =
+        player.connectionPhase === "ready" ? selectedDevice?.id : undefined;
+      if (!deviceId || player.deviceId !== deviceId) {
+        throw new Error(
+          "Choose the Spotify device Aura should control before playing a track.",
+        );
+      }
+      await requireActiveSpotifyDevice(spotifyApiClient, deviceId);
 
       if (contextUri) {
         await spotifyApiClient.startPlayback({
           contextUri,
           offset: { uri: track.uri },
-          deviceId: player.deviceId ?? undefined,
+          deviceId,
         });
       } else {
         await spotifyApiClient.startPlayback({
           uri: track.uri,
-          deviceId: player.deviceId ?? undefined,
+          deviceId,
         });
       }
 
       setLibraryOpen(false);
       showToast(`Spotify accepted “${track.name}” for playback.`);
     },
-    [player.deviceId, showToast, spotifyApiClient],
+    [
+      player.connectionPhase,
+      player.deviceId,
+      selectedDevice?.id,
+      showToast,
+      spotifyApiClient,
+    ],
   );
 
   const handleQueueSpotifyTrack = useCallback(
@@ -715,12 +984,26 @@ export function App() {
       if (!spotifyApiClient) {
         throw new Error("Connect Spotify before editing the queue.");
       }
+      const deviceId =
+        player.connectionPhase === "ready" ? selectedDevice?.id : undefined;
+      if (!deviceId || player.deviceId !== deviceId) {
+        throw new Error(
+          "Choose the Spotify device Aura should control before editing its queue.",
+        );
+      }
+      await requireActiveSpotifyDevice(spotifyApiClient, deviceId);
       await spotifyApiClient.addToQueue(track.uri, {
-        deviceId: player.deviceId ?? undefined,
+        deviceId,
       });
       showToast(`“${track.name}” was added to the Spotify queue.`);
     },
-    [player.deviceId, showToast, spotifyApiClient],
+    [
+      player.connectionPhase,
+      player.deviceId,
+      selectedDevice?.id,
+      showToast,
+      spotifyApiClient,
+    ],
   );
 
   const handleOpenSpotifyTrack = useCallback(
@@ -741,21 +1024,40 @@ export function App() {
     }
 
     let file: ImportedLrcFile | null = null;
+    const importedForTrackId = displayTrack.id;
+    const importedForTrackTitle = displayTrack.title;
     try {
       file = await window.aura.lyrics.importLrc(lyricsIdentity);
       if (!file) return;
-      localLyricsProvider.addEntry(toLocalLrcEntry(file));
-      const lyrics =
-        (await localLyricsProvider.findLyrics(lyricsIdentity)) ??
-        parseLrcLyrics(file.content, file.fileName);
-      setImportedLyrics({ trackId: displayTrack.id, file, lyrics });
+      const importedFile = file;
+      localLyricsProvider.addEntry(toLocalLrcEntry(importedFile));
+      const lyrics = parseLrcLyrics(
+        importedFile.content,
+        importedFile.fileName,
+      );
+      setImportedLyricsByTrack((current) => ({
+        ...current,
+        [importedForTrackId]: {
+          trackId: importedForTrackId,
+          file: importedFile,
+          lyrics,
+        },
+      }));
+      if (displayTrackIdRef.current === importedForTrackId) {
+        setLyricsLoadState({
+          trackId: importedForTrackId,
+          status: "ready",
+        });
+        setLyricsVisible(true);
+      }
       setImportedLyricsRecords((current) => [
-        file as ImportedLrcFile,
-        ...current.filter((record) => record.id !== file?.id),
+        importedFile,
+        ...current.filter((record) => record.id !== importedFile.id),
       ]);
-      setLyricsVisible(true);
       setLibraryOpen(false);
-      showToast(`${file.fileName} is now synced to ${displayTrack.title}.`);
+      showToast(
+        `${importedFile.fileName} is now synced to ${importedForTrackTitle}.`,
+      );
     } catch (error) {
       if (file && hasDesktopApi()) {
         void window.aura.lyrics.deleteImported(file.id);
@@ -774,15 +1076,29 @@ export function App() {
   const handleRemoveImportedLyrics = useCallback(
     async (id: string) => {
       try {
+        const removingCurrentLyrics =
+          importedLyrics?.trackId === displayTrack.id &&
+          importedLyrics.file.id === id;
         const result = hasDesktopApi()
           ? await localLyricsProvider.deletePersistedEntry(id)
           : { deleted: false };
         setImportedLyricsRecords((current) =>
           current.filter((record) => record.id !== id),
         );
-        setImportedLyrics((current) =>
-          current?.file.id === id ? null : current,
+        setImportedLyricsByTrack((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(
+              ([, entry]) => entry.file.id !== id,
+            ),
+          ),
         );
+        if (removingCurrentLyrics) {
+          setLyricsLoadState({
+            trackId: displayTrack.id,
+            status: displayTrack.lyrics ? "ready" : "loading",
+          });
+          setLyricsRevision((revision) => revision + 1);
+        }
         showToast(
           result.deleted
             ? "Imported lyrics were removed from this Mac."
@@ -792,7 +1108,13 @@ export function App() {
         showToast(readError(error), "warning");
       }
     },
-    [localLyricsProvider, showToast],
+    [
+      displayTrack.id,
+      displayTrack.lyrics,
+      importedLyrics,
+      localLyricsProvider,
+      showToast,
+    ],
   );
 
   const handleSettingChange = useCallback(
@@ -853,9 +1175,9 @@ export function App() {
         <div className="brand" aria-label="Aura Player">
           <span className="brand__wordmark">AURA</span>
           <span className="brand__edition">
-            {player.source === "spotify"
-              ? player.connectionPhase === "ready"
-                ? "Live listening room"
+            {connected
+              ? selectedDevice
+                ? "Spotify remote control"
                 : "Spotify session"
               : "Local design preview"}
           </span>
@@ -886,8 +1208,8 @@ export function App() {
               {!authResolved
                 ? "Checking Spotify"
                 : connected
-                ? player.connectionPhase === "ready"
-                  ? settings.deviceName
+                ? player.connectionPhase === "ready" && selectedDevice
+                  ? selectedDevice.name
                   : "Spotify connected"
                 : "Design preview"}
             </strong>
@@ -895,13 +1217,17 @@ export function App() {
               {!authResolved
                 ? "Reading the secure session"
                 : connected
-                ? readableConnectionPhase(player.connectionPhase)
+                ? player.connectionPhase === "ready" && selectedDevice
+                  ? `Audio on ${selectedDevice.name}`
+                  : readableConnectionPhase(player.connectionPhase)
                 : "Not a Spotify device"}
             </small>
           </span>
           <span
             className={`status-orb ${
-              player.connectionPhase === "ready" ? "status-orb--online" : ""
+              player.connectionPhase === "ready" && selectedDevice
+                ? "status-orb--online"
+                : ""
             }`}
             aria-hidden="true"
           />
@@ -920,12 +1246,32 @@ export function App() {
           positionMs={positionMs}
           offsetMs={settings.lyricOffsetMs}
           visible={lyricsVisible}
+          trackKey={`${displayTrack.source}:${displayTrack.id}`}
+          trackTitle={displayTrack.title}
+          status={displayLyricsStatus}
+          errorMessage={
+            lyricsLoadState.trackId === displayTrack.id
+              ? lyricsLoadState.errorMessage
+              : undefined
+          }
+          experimentalLookupEnabled={settings.experimentalLrclibEnabled}
+          onImport={hasDesktopApi() ? handleImportLrc : undefined}
         />
       </main>
 
       <Transport
         visible={chromeVisible}
+        playbackEnabled={
+          (!connected && player.source === "demo") ||
+          remotePlaybackReady
+        }
+        volumeEnabled={
+          (!connected && player.source === "demo") ||
+          (remotePlaybackReady &&
+            selectedDevice?.supportsVolume === true)
+        }
         playing={player.isPlaying}
+        restrictions={player.restrictions}
         positionMs={Math.min(positionMs, transportDuration)}
         durationMs={transportDuration}
         volume={player.volume}
@@ -961,14 +1307,31 @@ export function App() {
       <SettingsDrawer
         open={settingsOpen}
         connected={connected}
-        accountLabel={connected ? "Spotify account connected" : undefined}
+        accountLabel={
+          connected
+            ? selectedDevice
+              ? `Remote control on ${selectedDevice.name}`
+              : "Spotify connected · choose a device"
+            : undefined
+        }
         settings={settings}
         importedLyrics={importedLyricsRecords}
         currentImportedLyricsId={importedLyrics?.file.id}
         cacheSizeBytes={cacheSizeBytes}
+        experimentalLyricsEnabled={settings.experimentalLrclibEnabled}
+        experimentalLyricsStatus={experimentalLyricsStatus}
         onClose={() => setSettingsOpen(false)}
         onChange={handleSettingChange}
-        onReset={() => void settings.resetSettings()}
+        onExperimentalLyricsChange={(enabled) => {
+          if (!enabled) {
+            setRemoteLyricsByTrack({});
+          }
+          void settings.updateSetting("experimentalLrclibEnabled", enabled);
+        }}
+        onReset={() => {
+          setRemoteLyricsByTrack({});
+          void settings.resetSettings();
+        }}
         onImportLrc={handleImportLrc}
         onRemoveLrc={(id) => void handleRemoveImportedLyrics(id)}
         onClearCache={handleClearCache}
@@ -982,8 +1345,10 @@ export function App() {
         devices={devices}
         loadState={deviceLoadState}
         errorMessage={deviceError}
+        selectedDeviceId={selectedDevice?.id}
+        pendingDeviceId={pendingDeviceId}
         onClose={() => setDevicesOpen(false)}
-        onTransfer={handleTransfer}
+        onSelect={handleSelectDevice}
         onRetry={() => void handleOpenDevices()}
         onConnect={() => {
           setDevicesOpen(false);
@@ -1039,8 +1404,30 @@ function hasDesktopApi() {
 function createSpotifyApiClient() {
   return new SpotifyApiClient({
     getAccessToken: async () => {
-      const token = await window.aura.auth.getWebPlaybackToken();
-      return token.accessToken;
+      try {
+        const token = await window.aura.auth.getWebPlaybackToken();
+        return token.accessToken;
+      } catch (cause) {
+        const message = readError(cause);
+        if (/could not be reached|network/i.test(message)) {
+          throw new SpotifyApiError({
+            code: "network",
+            message: "Aura Player could not refresh Spotify authorization.",
+            action: "Check the network and try again.",
+            cause,
+          });
+        }
+        if (/keychain|accessed securely|secure session/i.test(message)) {
+          throw new SpotifyApiError({
+            code: "authentication",
+            message:
+              "Aura Player could not read the Spotify session from macOS Keychain.",
+            action: "Unlock Keychain or reconnect Spotify.",
+            cause,
+          });
+        }
+        throw cause;
+      }
     },
   });
 }
@@ -1077,6 +1464,25 @@ function toLocalLrcEntry(file: ImportedLrcFile): LocalLrcEntry {
     durationMs: file.durationMs,
     importedAt: Date.parse(file.importedAt),
   };
+}
+
+function addBoundedTrackEntry<Value>(
+  current: Record<string, Value>,
+  trackId: string,
+  value: Value,
+  maximumEntries: number,
+): Record<string, Value> {
+  const next = { ...current };
+  delete next[trackId];
+  next[trackId] = value;
+
+  const overflow = Object.keys(next).length - maximumEntries;
+  if (overflow > 0) {
+    for (const key of Object.keys(next).slice(0, overflow)) {
+      delete next[key];
+    }
+  }
+  return next;
 }
 
 function hashString(value: string) {
@@ -1122,6 +1528,72 @@ function readAuthFailure(
   return "The saved Spotify session could not be restored. Sign in again.";
 }
 
+function mapSpotifyDevice(device: SpotifyDevice): AuraDevice {
+  if (device.id === null) {
+    throw new Error("Spotify returned a device without a usable identifier.");
+  }
+
+  return {
+    id: device.id,
+    name: device.name,
+    type: mapDeviceType(device.type),
+    isActive: device.isActive,
+    available: !device.isRestricted,
+    supportsVolume: device.supportsVolume,
+  };
+}
+
+async function waitForActiveSpotifyDevice(
+  api: SpotifyApiClient,
+  deviceId: string,
+): Promise<{
+  target: SpotifyDevice & { id: string };
+  devices: SpotifyDevice[];
+}> {
+  const retryDelays = [0, 180, 360, 720];
+
+  for (const delayMs of retryDelays) {
+    if (delayMs > 0) {
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, delayMs);
+      });
+    }
+
+    const devices = await api.getAvailableDevices();
+    const target = devices.find((device) => device.id === deviceId);
+    if (target?.isRestricted) {
+      throw new Error(`${target.name} does not accept Spotify controls.`);
+    }
+    if (target?.id && target.isActive) {
+      return {
+        target: target as SpotifyDevice & { id: string },
+        devices,
+      };
+    }
+  }
+
+  throw new Error(
+    "Spotify did not activate that device. Start Spotify there and try again.",
+  );
+}
+
+async function requireActiveSpotifyDevice(
+  api: SpotifyApiClient,
+  deviceId: string,
+): Promise<SpotifyDevice & { id: string }> {
+  const devices = await api.getAvailableDevices();
+  const target = devices.find((device) => device.id === deviceId);
+  if (!target?.id || !target.isActive) {
+    throw new Error(
+      "Playback moved to another Spotify device. Choose the device Aura should control again.",
+    );
+  }
+  if (target.isRestricted) {
+    throw new Error(`${target.name} does not accept Spotify controls.`);
+  }
+  return target as SpotifyDevice & { id: string };
+}
+
 function mapDeviceType(type: string): AuraDevice["type"] {
   const normalized = type.toLowerCase();
   if (normalized.includes("phone") || normalized.includes("tablet")) {
@@ -1138,13 +1610,13 @@ function mapDeviceType(type: string): AuraDevice["type"] {
 }
 
 function readableConnectionPhase(phase: string) {
-  if (phase === "ready") return "Available in Spotify Connect";
-  if (phase === "loading-sdk") return "Loading playback service";
-  if (phase === "connecting") return "Registering this Mac";
+  if (phase === "ready") return "Remote controls ready";
+  if (phase === "loading-sdk") return "Preparing remote control";
+  if (phase === "connecting") return "Binding selected device";
   if (phase === "reconnecting") return "Reconnecting";
   if (phase === "offline") return "Network offline";
-  if (phase === "unavailable") return "Playback unavailable";
+  if (phase === "unavailable") return "Choose a device";
   if (phase === "error") return "Needs attention";
   if (phase === "demo") return "Local preview active";
-  return "Waiting for playback";
+  return "Choose a playback device";
 }

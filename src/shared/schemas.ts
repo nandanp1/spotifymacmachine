@@ -19,6 +19,7 @@ export const appSettingsSchema = z
     launchAtLogin: z.boolean(),
     hideControlsAutomatically: z.boolean(),
     showLyricsByDefault: z.boolean(),
+    experimentalLrclibEnabled: z.boolean(),
     lyricOffsetMs: z.number().int().min(-10_000).max(10_000),
     motionIntensity: z.number().min(0).max(1),
     backgroundBlur: z.number().min(0).max(1),
@@ -175,6 +176,93 @@ export const importedLrcFileSchema = importedLrcRecordSchema
 export const importedLrcDeleteResultSchema = z
   .object({
     deleted: z.boolean(),
+  })
+  .strict();
+
+export const lrclibRequestIdSchema = z.string().uuid();
+
+const lrclibMetadataTextSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(300)
+  .refine(
+    (value) =>
+      [...value].every((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint > 31 && codePoint !== 127;
+      }),
+    "Track metadata cannot contain control characters.",
+  );
+
+const lrclibTrackIdentitySchema = lyricsTrackIdentitySchema
+  .extend({
+    spotifyTrackId: z.string().regex(/^[A-Za-z0-9]{22}$/),
+    title: lrclibMetadataTextSchema,
+    artist: lrclibMetadataTextSchema,
+    album: lrclibMetadataTextSchema,
+  })
+  .strict();
+
+export const lrclibLookupRequestSchema = z
+  .object({
+    requestId: lrclibRequestIdSchema,
+    track: lrclibTrackIdentitySchema,
+  })
+  .strict();
+
+export const lrclibCancelRequestSchema = z
+  .object({
+    requestId: lrclibRequestIdSchema,
+  })
+  .strict();
+
+const lrclibLookupBaseSchema = z
+  .object({
+    provider: z.literal("lrclib"),
+  })
+  .strict();
+
+export const lrclibLyricsLookupResultSchema = z.discriminatedUnion("status", [
+  lrclibLookupBaseSchema
+    .extend({
+      status: z.literal("found"),
+      format: z.enum(["lrc", "plain"]),
+      content: z.string().min(1).max(1_000_000),
+    })
+    .strict(),
+  lrclibLookupBaseSchema
+    .extend({
+      status: z.literal("not-found"),
+    })
+    .strict(),
+  lrclibLookupBaseSchema
+    .extend({
+      status: z.literal("instrumental"),
+    })
+    .strict(),
+  lrclibLookupBaseSchema
+    .extend({
+      status: z.literal("disabled"),
+    })
+    .strict(),
+  lrclibLookupBaseSchema
+    .extend({
+      status: z.literal("rate-limited"),
+      retryAfterMs: z.number().int().nonnegative().max(60 * 60 * 1_000),
+    })
+    .strict(),
+  lrclibLookupBaseSchema
+    .extend({
+      status: z.literal("error"),
+      code: z.enum(["network", "timeout", "invalid-response"]),
+    })
+    .strict(),
+]);
+
+export const lrclibLookupCancelResultSchema = z
+  .object({
+    cancelled: z.boolean(),
   })
   .strict();
 

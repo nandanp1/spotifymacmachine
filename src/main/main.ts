@@ -5,6 +5,7 @@ import { app, dialog, type BrowserWindow } from "electron";
 import { APP_NAME } from "../shared/constants";
 import { SpotifyAuthService } from "./auth";
 import { registerIpcHandlers } from "./ipc";
+import { LrclibLyricsService } from "./lrclib-lyrics-service";
 import { MenuBarController } from "./menu";
 import { RecoveryMonitor } from "./recovery-monitor";
 import { SecureTokenStore, SettingsStore } from "./secure-store";
@@ -56,6 +57,7 @@ async function bootstrap(): Promise<void> {
   }
 
   const auth = new SpotifyAuthService(createTokenStore());
+  const lrclib = new LrclibLyricsService();
   menuBar = new MenuBarController({
     getMainWindow: () => mainWindow,
     showMainWindow,
@@ -68,6 +70,7 @@ async function bootstrap(): Promise<void> {
     settings,
     menuBar,
     recovery: recoveryMonitor,
+    lrclib,
   });
   recoveryMonitor.start();
 

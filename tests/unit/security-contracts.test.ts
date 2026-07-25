@@ -14,7 +14,7 @@ describe("renderer content security policy", () => {
 
     expect(html).not.toContain('http-equiv="Content-Security-Policy"');
     expect(buildContentSecurityPolicy(false)).toContain(
-      "frame-src https://sdk.scdn.co",
+      "frame-src 'none'",
     );
   });
 
@@ -24,21 +24,25 @@ describe("renderer content security policy", () => {
 
     expect(production).not.toContain("localhost");
     expect(production).not.toContain("127.0.0.1");
+    expect(production).toContain(
+      "script-src 'self'; style-src",
+    );
     expect(development).toContain("http://127.0.0.1:*");
     expect(development).toContain("ws://localhost:*");
+    expect(development).toContain(
+      "script-src 'self' 'unsafe-inline'",
+    );
     expect(development).not.toContain("'unsafe-eval'");
     expect(development).toContain("default-src 'self'");
     expect(development).toContain("object-src 'none'");
-    expect(development).toContain("frame-src https://sdk.scdn.co");
+    expect(development).toContain("frame-src 'none'");
+    expect(development).toContain("media-src 'none'");
   });
 });
 
 describe("Spotify authorization scope contract", () => {
   it("requests only scopes consumed by playback, devices, and library", () => {
     expect(SPOTIFY_SCOPES).toEqual([
-      "streaming",
-      "user-read-email",
-      "user-read-private",
       "user-read-playback-state",
       "user-modify-playback-state",
       "playlist-read-private",

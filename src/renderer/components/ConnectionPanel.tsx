@@ -66,9 +66,10 @@ export function ConnectionPanel({
               <>
                 <CheckCircle2 className="connection-panel__icon" size={24} />
                 <p className="eyebrow">Connection ready</p>
-                <h2 id="connect-title">Spotify is part of the room.</h2>
+                <h2 id="connect-title">Your Spotify account is connected.</h2>
                 <p>
-                  Aura will register its player when the Web Playback SDK becomes ready.
+                  Choose a Spotify device explicitly. Audio stays on that device
+                  while Aura controls its playback.
                 </p>
                 <button className="primary-button" type="button" onClick={onClose}>
                   Return to now playing
@@ -110,7 +111,7 @@ export function ConnectionPanel({
                   are stored in the macOS Keychain.
                 </p>
                 <ul className="connection-facts">
-                  <li>Premium is required for in-app playback.</li>
+                  <li>Spotify Premium is required for playback controls.</li>
                   <li>Aura never records, downloads, or inspects Spotify audio.</li>
                   <li>You can disconnect and erase stored credentials at any time.</li>
                 </ul>

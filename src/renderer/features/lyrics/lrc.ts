@@ -1,6 +1,7 @@
 import type { LyricsLine, LyricsResult } from "./types";
 
 const MAX_LRC_BYTES = 1_000_000;
+const MAX_LRC_LINES = 3_000;
 const METADATA_TAG = /^\[([a-z][\w-]*):([^\]]*)\]\s*$/i;
 const TIMESTAMP_TAG =
   /\[(?:(\d{1,2}):)?(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?\]/g;
@@ -90,6 +91,11 @@ export function parseLrc(
     }
 
     timestamps.forEach((timestamp, timestampIndex) => {
+      if (parsed.length >= MAX_LRC_LINES) {
+        throw new LrcParseError(
+          `This file contains more than ${MAX_LRC_LINES.toLocaleString()} timed lyric lines.`,
+        );
+      }
       parsed.push({
         startMs: Math.max(0, timestamp + totalOffsetMs),
         text,
